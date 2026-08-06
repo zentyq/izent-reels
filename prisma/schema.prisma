@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String   @id @default(cuid())
+  email           String?  @unique
+  name            String?
+  passwordHash    String?
+  phone           String?  @unique
+  instagramCookie String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  sessions Session[]
+  chats    Chat[]
+  profiles AyrshareProfile[]
+  series   Series[]
+}
+
+model AyrshareProfile {
+  id         String   @id @default(cuid())
+  userId     String
+  profileKey String   @unique
+  title      String
+  createdAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Chat {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String   @default("New Chat")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  chatId    String
+  role      String
+  content   String
+  createdAt DateTime @default(now())
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+}
+
+model Series {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  /// short (9:16 reels) | long (16:9 YouTube/Facebook)
+  videoFormat     String   @default("short")
+  /// faceless | ugc | commercial
+  contentMode     String   @default("faceless")
+  niche           String
+  nicheMode       String   @default("preset")
+  customNiche     String?
+  exampleScript   String?
+  voiceId         String   @default("JBFqnCBsd6RMkjVDRZzb")
+  musicIds        String[] @default([])
+  customMusicUrls String[] @default([])
+  artStyle        String
+  /// Product / brand / subject photo for UGC & commercial (AI reference)
+  referenceImageUrl String?
+  captionStyle    String
+  glitchEffect    Boolean  @default(false)
+  /// deprecated: prefer visualMode
+  animatedHook    Boolean  @default(false)
+  /// images | animated_hook | full_video
+  visualMode      String   @default("images")
+  videoModel      String   @default("kwaivgi/kling-v3.0-std/image-to-video")
+  /// Duration id e.g. "30", "long-15"
+  duration        String   @default("30")
+  publishTime     String   @default("12:00")
+  timezone        String   @default("UTC")
+  projectId       String?
+  platforms       String[] @default([])
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videos SeriesVideo[]
+}
+
+model SeriesVideo {
+  id             String    @id @default(cuid())
+  seriesId       String
+  title          String?
+  /// Long-form YouTube/Facebook description
+  description    String?
+  script         String?
+  caption        String?
+  status         String    @default("pending")
+  mediaUrl       String?
+  thumbnailUrl   String?
+  audioUrl       String?
+  musicUrl       String?
+  scheduledAt    DateTime?
+  generateAt     DateTime?
+  publishedAt    DateTime?
+  error          String?
+  ayrsharePostId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  series Series @relation(fields: [seriesId], references: [id], onDelete: Cascade)
+
+  @@index([status, generateAt])
+  @@index([status, scheduledAt])
+}
