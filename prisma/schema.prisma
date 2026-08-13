@@ -17,10 +17,11 @@ model User {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  sessions Session[]
-  chats    Chat[]
-  profiles AyrshareProfile[]
-  series   Series[]
+  sessions   Session[]
+  chats      Chat[]
+  profiles   AyrshareProfile[]
+  series     Series[]
+  studioJobs StudioJob[]
 }
 
 model AyrshareProfile {
@@ -76,13 +77,22 @@ model Series {
   nicheMode       String   @default("preset")
   customNiche     String?
   exampleScript   String?
+  /// Polished narration from YouTube import — generation must not invent a new story
+  lockedScript    String?
+  sourceYoutubeUrl String?
   voiceId         String   @default("JBFqnCBsd6RMkjVDRZzb")
+  /// Skip ElevenLabs narration (UGC / commercial / silent "normal" video)
+  skipVoice       Boolean  @default(false)
   musicIds        String[] @default([])
   customMusicUrls String[] @default([])
+  skipMusic       Boolean  @default(false)
   artStyle        String
-  /// Product / brand / subject photo for UGC & commercial (AI reference)
+  /// @deprecated use referenceImageUrls
   referenceImageUrl String?
-  captionStyle    String
+  /// Product / brand / subject photos for UGC & commercial (AI reference)
+  referenceImageUrls String[] @default([])
+  captionStyle    String   @default("bold-stroke")
+  skipCaptions    Boolean  @default(false)
   glitchEffect    Boolean  @default(false)
   /// deprecated: prefer visualMode
   animatedHook    Boolean  @default(false)
@@ -92,9 +102,17 @@ model Series {
   /// Duration id e.g. "30", "long-15"
   duration        String   @default("30")
   publishTime     String   @default("12:00")
-  timezone        String   @default("UTC")
+  /// How many videos to generate + auto-post each day (1–5)
+  postsPerDay     Int      @default(1)
+  /// Hours between posts on the same day (e.g. 2am + 4h → 2am, 6am, 10am)
+  postIntervalHours Int     @default(4)
+  /// Optional first publish datetime from calendar picker (ISO stored as DateTime)
+  nextPublishAt   DateTime?
+  timezone        String   @default("Europe/London")
   projectId       String?
   platforms       String[] @default([])
+  /// Google Calendar event id when synced
+  calendarEventId String?
   status          String   @default("active")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -106,6 +124,8 @@ model Series {
 model SeriesVideo {
   id             String    @id @default(cuid())
   seriesId       String
+  /// 1-based episode number within the series
+  episodeNumber  Int       @default(1)
   title          String?
   /// Long-form YouTube/Facebook description
   description    String?
@@ -121,6 +141,7 @@ model SeriesVideo {
   publishedAt    DateTime?
   error          String?
   ayrsharePostId String?
+  calendarEventId String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -128,4 +149,39 @@ model SeriesVideo {
 
   @@index([status, generateAt])
   @@index([status, scheduledAt])
+  @@index([seriesId, episodeNumber])
+}
+
+/// Standalone long-form video generator (Forge /studio)
+model StudioJob {
+  id              String   @id @default(cuid())
+  userId          String
+  title           String?
+  prompt          String
+  script          String?
+  /// Total target length in seconds (1–900)
+  durationSec     Int      @default(30)
+  aspectRatio     String   @default("16:9")
+  /// WaveSpeed model path (kling / veo / seedance)
+  videoModel      String   @default("kwaivgi/kling-v3.0-std/image-to-video")
+  /// Character + style bible for consistency across clips
+  styleBible      String?
+  /// Optional user reference image URL
+  referenceImageUrl String?
+  status          String   @default("queued")
+  /// 0–100
+  progress        Int      @default(0)
+  progressNote    String?
+  /// JSON array of clip URLs
+  clipUrls        String[] @default([])
+  mediaUrl        String?
+  thumbnailUrl    String?
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status])
 }

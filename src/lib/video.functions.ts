@@ -62,10 +62,12 @@ export const editVideo = createServerFn({ method: "POST" })
       return positions[pos] || positions["bottom-right"];
     }
 
-    // Dynamically import ffmpeg-static to avoid client-side bundling issues
-    const ffmpegStatic = (await import("ffmpeg-static")).default;
-    if (ffmpegStatic) {
-      ffmpeg.setFfmpegPath(ffmpegStatic);
+    // Prefer system ffmpeg (Docker) — avoids ESM __dirname crash from ffmpeg-static
+    try {
+      const { resolveFfmpegPath } = await import("./ffmpeg-path.server");
+      ffmpeg.setFfmpegPath(await resolveFfmpegPath());
+    } catch (e) {
+      console.warn("ffmpeg path resolve failed:", (e as Error).message);
     }
 
     let tmpDir = "";

@@ -9,6 +9,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 
@@ -17,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   deleteSeries,
+  generateNextEpisode,
   listSeries,
   processSeriesQueue,
   updateSeriesStatus,
@@ -40,9 +42,11 @@ function SeriesListPage() {
   const fnStatus = useServerFn(updateSeriesStatus);
   const fnDelete = useServerFn(deleteSeries);
   const fnProcess = useServerFn(processSeriesQueue);
+  const fnNext = useServerFn(generateNextEpisode);
 
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [nextBusyId, setNextBusyId] = useState<string | null>(null);
   const [series, setSeries] = useState<any[]>([]);
 
   async function load() {
@@ -85,6 +89,18 @@ function SeriesListPage() {
       load();
     } finally {
       setProcessing(false);
+    }
+  }
+
+  async function onNextEpisode(id: string) {
+    setNextBusyId(id);
+    try {
+      const res = await fnNext({ data: { seriesId: id, generateNow: true } });
+      if (!res.ok) return toast.error(res.error || "Next story failed");
+      toast.success("Next story generated — complete standalone story");
+      load();
+    } finally {
+      setNextBusyId(null);
     }
   }
 
@@ -148,33 +164,67 @@ function SeriesListPage() {
                 </Badge>
               </div>
               <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <span className="rounded-md bg-muted/60 px-2 py-1">{s.artStyle}</span>
+                <span className="rounded-md bg-muted/60 px-2 py-1">
+                  {s.artStyle === "auto" ? "Auto" : s.artStyle}
+                </span>
                 <span className="rounded-md bg-muted/60 px-2 py-1">{s.duration}s</span>
                 <span className="rounded-md bg-muted/60 px-2 py-1">
                   {s._count?.videos ?? 0} videos
                 </span>
-                <span className="rounded-md bg-muted/60 px-2 py-1">@{s.publishTime}</span>
+                <span className="rounded-md bg-muted/60 px-2 py-1">
+                  @{s.publishTime} UK
+                </span>
+                {s.videos?.[0]?.status === "published" && (
+                  <span className="rounded-md bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 px-2 py-1 font-medium">
+                    Latest posted
+                  </span>
+                )}
               </div>
-              <div className="flex gap-2">
+              {!(s.platforms || []).length && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  No social accounts for posting —{" "}
+                  <Link to="/series/settings" className="underline font-medium">
+                    connect in Settings
+                  </Link>
+                </p>
+              )}
+              <div className="flex flex-col gap-2">
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="flex-1"
-                  onClick={() => toggleStatus(s.id, s.status)}
+                  className="gradient-bg text-primary-foreground w-full"
+                  disabled={nextBusyId === s.id}
+                  onClick={() => onNextEpisode(s.id)}
                 >
-                  {s.status === "active" ? (
-                    <>
-                      <Pause className="h-3.5 w-3.5 mr-1.5" /> Pause
-                    </>
+                  {nextBusyId === s.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
                     <>
-                      <Play className="h-3.5 w-3.5 mr-1.5" /> Resume
+                      <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                      Generate next story
                     </>
                   )}
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => onDelete(s.id)}>
-                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={() => toggleStatus(s.id, s.status)}
+                  >
+                    {s.status === "active" ? (
+                      <>
+                        <Pause className="h-3.5 w-3.5 mr-1.5" /> Pause
+                      </>
+                    ) : (
+                      <>
+                        <Play className="h-3.5 w-3.5 mr-1.5" /> Resume
+                      </>
+                    )}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => onDelete(s.id)}>
+                    <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                  </Button>
+                </div>
               </div>
             </div>
           ))}

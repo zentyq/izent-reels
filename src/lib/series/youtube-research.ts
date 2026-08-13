@@ -1,6 +1,7 @@
 export type YouTubeVideoInsight = {
   id: string;
   title: string;
+  description: string;
   channelTitle: string;
   channelId: string;
   url: string;
@@ -55,12 +56,59 @@ async function ytGet(path: string, params: Record<string, string>) {
   return body;
 }
 
+function toHashtag(token: string): string {
+  const cleaned = token
+    .replace(/^#+/, "")
+    .replace(/[^\p{L}\p{N}\s_-]/gu, "")
+    .trim();
+  if (!cleaned) return "";
+  const parts = cleaned.split(/[\s_-]+/).filter(Boolean);
+  const tag =
+    parts.length === 1
+      ? parts[0]
+      : parts.map((p) => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join("");
+  if (tag.length < 2 || tag.length > 40) return "";
+  return `#${tag}`;
+}
+
+/** Build unique #tags from YouTube research keywords / niche phrases. */
+export function hashtagsFromKeywords(keywords: string[], limit = 8): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const kw of keywords) {
+    const tag = toHashtag(kw);
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/** Ensure caption/description end with research hashtags (idempotent). */
+export function ensureResearchHashtags(
+  text: string,
+  keywords: string[],
+  limit = 8,
+): string {
+  const tags = hashtagsFromKeywords(keywords, limit);
+  if (!tags.length) return text;
+  const lower = text.toLowerCase();
+  const missing = tags.filter((t) => !lower.includes(t.toLowerCase()));
+  if (!missing.length) return text;
+  const base = text.trimEnd();
+  const sep = base ? (base.includes("\n") ? "\n\n" : " ") : "";
+  return `${base}${sep}${missing.join(" ")}`.trim();
+}
+
 function hoursSince(iso: string): number {
   const ms = Date.now() - new Date(iso).getTime();
   return Math.max(1, ms / (1000 * 60 * 60));
 }
 
-function extractKeywords(titles: string[], limit = 20): string[] {
+function extractKeywords(texts: string[], limit = 20): string[] {
   const stop = new Set([
     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of",
     "is", "are", "was", "were", "be", "been", "being", "with", "from", "by",
@@ -71,7 +119,7 @@ function extractKeywords(titles: string[], limit = 20): string[] {
     "top", "part", "episode", "ep", "official",
   ]);
   const counts = new Map<string, number>();
-  for (const title of titles) {
+  for (const title of texts) {
     const words = title
       .toLowerCase()
       .replace(/[^\p{L}\p{N}\s#]/gu, " ")
@@ -110,9 +158,11 @@ async function hydrateStats(items: Array<{
     const commentCount = Number(v?.statistics?.commentCount || 0);
     const publishedAt = v?.snippet?.publishedAt || item.publishedAt;
     const viewVelocity = Math.round(viewCount / hoursSince(publishedAt));
+    const description = String(v?.snippet?.description || "").slice(0, 600);
     return {
       id: item.id,
       title: v?.snippet?.title || item.title,
+      description,
       channelTitle: v?.snippet?.channelTitle || item.channelTitle,
       channelId: v?.snippet?.channelId || item.channelId,
       url: `https://www.youtube.com/watch?v=${item.id}`,
@@ -224,7 +274,8 @@ function buildBrief(research: Omit<YouTubeResearch, "brief">): string {
 
   return [
     `YouTube research for niche: "${research.niche}"`,
-    `Keywords: ${research.keywords.slice(0, 12).join(", ")}`,
+    `Keywords / topics: ${research.keywords.slice(0, 12).join(", ")}`,
+    `Required hashtags (include these in caption AND description): ${hashtagsFromKeywords(research.keywords, 8).join(" ")}`,
     `Popular title patterns:\n${topTitles.map((t) => `- ${t}`).join("\n")}`,
     `High view-velocity clips:\n${hot
       .map(
@@ -235,7 +286,7 @@ function buildBrief(research: Omit<YouTubeResearch, "brief">): string {
     `Competitor channels:\n${comps
       .map((c) => `- ${c.channelTitle} (avg ${c.avgViews.toLocaleString()} views)`)
       .join("\n")}`,
-    `Write a unique episode that can compete with these patterns. Do NOT copy titles verbatim. Use hooks similar to high-velocity videos. Weave 3–6 keywords naturally into the spoken script and caption hashtags.`,
+    `Write a unique, self-contained story that can compete with these patterns. Do NOT copy titles verbatim. Do NOT make sequels, episodes, or part 2. Use hooks similar to high-velocity videos. Weave 3–6 keywords naturally into the spoken script. Caption and description MUST include the required hashtags listed above (plus 2–4 related tags).`,
   ].join("\n\n");
 }
 
@@ -263,6 +314,8 @@ export async function researchYouTubeNiche(niche: string): Promise<YouTubeResear
   const keywords = extractKeywords([
     ...popularTitles,
     ...trending.map((v) => v.title),
+    ...topByViews.map((v) => v.description.slice(0, 240)),
+    ...trending.map((v) => v.description.slice(0, 240)),
     niche,
   ]);
   const competitors = buildCompetitors(all);

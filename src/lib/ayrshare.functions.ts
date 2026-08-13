@@ -1,3 +1,4 @@
+import { createPrivateKey } from "node:crypto";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { prisma } from "./db";
@@ -12,12 +13,117 @@ function apiKey() {
   return k;
 }
 
+/**
+ * Ayrshare JWT needs a real RSA PEM. Railway/env pastes often store the key with
+ * literal `\n` (not newlines). Also never rename PKCS#8 headers to PKCS#1 without
+ * re-encoding — that breaks RS256 ("secretOrPrivateKey must be an asymmetric key").
+ */
+function normalizeAyrsharePrivateKey(raw: string): string {
+  let key = raw.trim();
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+  if (key.includes("\\n")) {
+    key = key.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n");
+  }
+  key = key.replace(/\r\n/g, "\n").trim();
+  if (!key.includes("BEGIN") || !key.includes("PRIVATE KEY")) {
+    throw new Error(
+      "AYRSHARE_PRIVATE_KEY is missing or invalid — paste the full private.key from your Ayrshare Integration Package (including BEGIN/END lines).",
+    );
+  }
+  try {
+    // Export PKCS#1 PEM — format Ayrshare documents (BEGIN RSA PRIVATE KEY)
+    return createPrivateKey(key).export({ type: "pkcs1", format: "pem" }).toString();
+  } catch {
+    throw new Error(
+      "AYRSHARE_PRIVATE_KEY could not be parsed as an RSA key. Re-download private.key from Ayrshare → API → Integration Package and set AYRSHARE_PRIVATE_KEY with \\n for newlines.",
+    );
+  }
+}
+
+async function resolveAyrsharePrivateKey(): Promise<string> {
+  try {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const fileKey = await fs.readFile(path.join(process.cwd(), "private.key"), "utf-8");
+    return normalizeAyrsharePrivateKey(fileKey);
+  } catch {
+    // private.key is gitignored — production uses the env var
+  }
+  const fromEnv = process.env.AYRSHARE_PRIVATE_KEY;
+  if (!fromEnv || fromEnv === "YOUR_AYRSHARE_PRIVATE_KEY") {
+    throw new Error(
+      "Please add AYRSHARE_PRIVATE_KEY in Railway (full private.key from Ayrshare Integration Package) to connect social accounts.",
+    );
+  }
+  return normalizeAyrsharePrivateKey(fromEnv);
+}
+
 async function getUserId(): Promise<string> {
   const token = getCookie(SESSION_COOKIE);
   if (!token) throw new Error("Not authenticated");
   const session = await prisma.session.findUnique({ where: { token } });
   if (!session || session.expiresAt < new Date()) throw new Error("Not authenticated");
   return session.userId;
+}
+
+/** Profile-Key must belong to the logged-in user — prevents seeing another user's accounts. */
+export async function assertOwnedProfileKey(userId: string, profileKey: string) {
+  const row = await prisma.ayrshareProfile.findFirst({
+    where: { userId, profileKey },
+  });
+  if (!row) {
+    throw new Error(
+      "This social profile is not linked to your account. Open Series Settings → Social and connect again.",
+    );
+  }
+  return row;
+}
+
+async function createAyrshareProfileForUser(userId: string, titleBase = "My Profile") {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const title = `${titleBase} ${user?.name || "User"} ${Date.now()}`;
+  const res = await api("/profiles/profile", {
+    method: "POST",
+    body: JSON.stringify({ title }),
+  });
+  if (!res.profileKey) throw new Error("Ayrshare did not return a profileKey");
+  return prisma.ayrshareProfile.create({
+    data: {
+      userId,
+      profileKey: res.profileKey,
+      title: titleBase,
+    },
+  });
+}
+
+/** Always returns this user's own Ayrshare profileKey (creates one if needed). */
+export async function getOrCreateOwnedProfileKey(userId: string): Promise<string> {
+  const existing = await prisma.ayrshareProfile.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "asc" },
+  });
+  if (existing) return existing.profileKey;
+  const created = await createAyrshareProfileForUser(userId);
+  return created.profileKey;
+}
+
+/** Use client key only if owned; otherwise fall back to the user's own profile. */
+export async function resolveOwnedProfileKey(
+  userId: string,
+  maybeKey?: string | null,
+): Promise<string> {
+  if (maybeKey) {
+    const owned = await prisma.ayrshareProfile.findFirst({
+      where: { userId, profileKey: maybeKey },
+    });
+    if (owned) return owned.profileKey;
+  }
+  return getOrCreateOwnedProfileKey(userId);
 }
 
 async function api(path: string, init: RequestInit = {}, profileKey?: string): Promise<any> {
@@ -54,33 +160,12 @@ async function api(path: string, init: RequestInit = {}, profileKey?: string): P
 export const listProjects = createServerFn({ method: "GET" }).handler(async () => {
   try {
     const userId = await getUserId();
-    let profiles = await prisma.ayrshareProfile.findMany({
+    await getOrCreateOwnedProfileKey(userId);
+    const profiles = await prisma.ayrshareProfile.findMany({
       where: { userId },
-      orderBy: { createdAt: "asc" }
+      orderBy: { createdAt: "asc" },
     });
-    
-    // Auto-create a default profile if the user has none (ensures 1 profile per user automatically)
-    if (profiles.length === 0) {
-      const user = await prisma.user.findUnique({ where: { id: userId } });
-      const title = `${user?.name || "User"} ${Date.now()}`;
-      
-      const res = await api("/profiles/profile", {
-        method: "POST",
-        body: JSON.stringify({ title }),
-      });
 
-      if (res.profileKey) {
-        const newProfile = await prisma.ayrshareProfile.create({
-          data: {
-            userId,
-            profileKey: res.profileKey,
-            title: "My Profile",
-          }
-        });
-        profiles = [newProfile];
-      }
-    }
-    
     const projects = profiles.map((p) => ({
       projectId: p.profileKey,
       name: p.title,
@@ -95,33 +180,26 @@ export const createProject = createServerFn({ method: "POST" })
   .inputValidator(z.object({ name: z.string().min(1).max(100) }))
   .handler(async ({ data }) => {
     const userId = await getUserId();
-    
-    // Note: Ayrshare requires the title to be unique.
-    const title = `${data.name} ${Date.now()}`;
-    const res = await api("/profiles/profile", {
-      method: "POST",
-      body: JSON.stringify({ title }),
+    // Prefer reusing the user's existing profile (1 profile per user on Business plan)
+    const existing = await prisma.ayrshareProfile.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "asc" },
     });
-
-    if (res.profileKey) {
-      await prisma.ayrshareProfile.create({
-        data: {
-          userId,
-          profileKey: res.profileKey,
-          title: data.name,
-        }
-      });
+    if (existing) {
+      return { profileKey: existing.profileKey, title: existing.title, reused: true };
     }
-
-    return res;
+    const created = await createAyrshareProfileForUser(userId, data.name);
+    return { profileKey: created.profileKey, title: created.title, reused: false };
   });
 
 export const listAccounts = createServerFn({ method: "POST" })
   .inputValidator(z.object({ projectId: z.string().min(1) }))
   .handler(async ({ data }) => {
     try {
-      // Fetch connected accounts for this user profile
-      const res = await api("/user", {}, data.projectId);
+      const userId = await getUserId();
+      // Never list another user's Ayrshare profile
+      const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
+      const res = await api("/user", {}, profileKey);
       const activePlatforms = res.activeSocialAccounts || [];
       const displayNames = res.displayNames || [];
 
@@ -168,23 +246,9 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
     })
   )
   .handler(async ({ data }) => {
-    let privateKey = process.env.AYRSHARE_PRIVATE_KEY;
-    
-    try {
-      const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      const fileKey = await fs.readFile(path.join(process.cwd(), "private.key"), "utf-8");
-      privateKey = fileKey.replace(/\r\n/g, '\n').trim();
-      privateKey = privateKey.replace("BEGIN PRIVATE KEY", "BEGIN RSA PRIVATE KEY");
-      privateKey = privateKey.replace("END PRIVATE KEY", "END RSA PRIVATE KEY");
-    } catch {
-      // ignore, fallback to env
-    }
-
-    if (!privateKey || privateKey === "YOUR_AYRSHARE_PRIVATE_KEY") {
-      throw new Error("Please add your AYRSHARE_PRIVATE_KEY in the environment variables or provide a private.key file to connect social accounts.");
-    }
-
+    const userId = await getUserId();
+    const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
+    const privateKey = await resolveAyrsharePrivateKey();
     const domain = process.env.AYRSHARE_DOMAIN || "id-ENrMP";
 
     const res = await fetch("https://api.ayrshare.com/api/profiles/generateJWT", {
@@ -196,7 +260,7 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
       body: JSON.stringify({
         domain,
         privateKey,
-        profileKey: data.projectId,
+        profileKey,
         allowedSocial: [data.platform.toLowerCase()],
       }),
     });
@@ -221,6 +285,8 @@ export const uploadMedia = createServerFn({ method: "POST" })
     })
   )
   .handler(async ({ data }) => {
+    const userId = await getUserId();
+    const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
     const ext = data.contentType.startsWith("video/")
       ? data.contentType.split("/")[1] || "mp4"
       : data.contentType.startsWith("image/")
@@ -240,7 +306,7 @@ export const uploadMedia = createServerFn({ method: "POST" })
           description: "Uploaded via IzentSocial",
         }),
       },
-      data.projectId
+      profileKey,
     );
 
     return { mediaId: res.url }; // Return the URL as mediaId
@@ -257,6 +323,8 @@ export const createPost = createServerFn({ method: "POST" })
     })
   )
   .handler(async ({ data }) => {
+    const userId = await getUserId();
+    const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
     // Map platforms to ayrshare format (lowercase string array)
     const platforms = data.socialAccounts.map((a) => a.platform.toLowerCase());
     const mediaUrls = data.mediaId ? [data.mediaId] : undefined;
@@ -284,7 +352,7 @@ export const createPost = createServerFn({ method: "POST" })
       headers: {
         "Authorization": `Bearer ${apiKey()}`,
         "Content-Type": "application/json",
-        "Profile-Key": data.projectId,
+        "Profile-Key": profileKey,
       },
       body: JSON.stringify(bodyObj),
     });
@@ -304,5 +372,7 @@ export const createPost = createServerFn({ method: "POST" })
 export const listHistory = createServerFn({ method: "POST" })
   .inputValidator(z.object({ projectId: z.string() }))
   .handler(async ({ data }) => {
-    return api("/history", { method: "GET" }, data.projectId);
+    const userId = await getUserId();
+    const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
+    return api("/history", { method: "GET" }, profileKey);
   });

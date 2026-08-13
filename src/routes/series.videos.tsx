@@ -2,16 +2,32 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Film, ImageIcon, Loader2, Sparkles } from "lucide-react";
+import {
+  CalendarClock,
+  CheckCircle2,
+  Film,
+  ImageIcon,
+  Loader2,
+  Send,
+  Sparkles,
+} from "lucide-react";
 
 import { SeriesShell } from "@/components/series/SeriesShell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   generateSeriesThumbnail,
   generateSeriesVideoNow,
   listSeriesVideos,
+  publishSeriesVideoNow,
 } from "@/lib/series.functions";
+import {
+  formatScheduleLabels,
+  londonDatetimeLocalToUtc,
+  toLondonDatetimeLocalValue,
+} from "@/lib/series/timezone";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/series/videos")({
@@ -25,9 +41,13 @@ function SeriesVideosPage() {
   const fnList = useServerFn(listSeriesVideos);
   const fnGenerate = useServerFn(generateSeriesVideoNow);
   const fnThumb = useServerFn(generateSeriesThumbnail);
+  const fnPublish = useServerFn(publishSeriesVideoNow);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
+  const [postBusyId, setPostBusyId] = useState<string | null>(null);
+  const [scheduleFor, setScheduleFor] = useState<string | null>(null);
+  const [scheduleAt, setScheduleAt] = useState("");
   const [videos, setVideos] = useState<any[]>([]);
 
   async function load() {
@@ -69,10 +89,62 @@ function SeriesVideosPage() {
     }
   }
 
+  async function onPostNow(id: string) {
+    setPostBusyId(id);
+    try {
+      const res = await fnPublish({ data: { videoId: id } });
+      if (!res.ok) return toast.error(res.error || "Post failed");
+      if ((res as any).warning) {
+        toast.warning(String((res as any).warning));
+      } else if ((res as any).tiktokPending) {
+        toast.message("Posted — TikTok may take 1–2 minutes to appear");
+      } else {
+        toast.success("Posted to connected social accounts");
+      }
+      load();
+    } finally {
+      setPostBusyId(null);
+    }
+  }
+
+  async function onSchedulePost(id: string) {
+    if (!scheduleAt) return toast.error("Pick a date and time");
+    let utc: Date;
+    try {
+      // datetime-local is treated as UK wall time (not browser OS timezone)
+      utc = londonDatetimeLocalToUtc(scheduleAt);
+    } catch {
+      return toast.error("Invalid schedule date/time");
+    }
+    if (utc.getTime() <= Date.now() + 30_000) {
+      return toast.error("Pick a future UK time");
+    }
+    const labels = formatScheduleLabels(utc);
+    setPostBusyId(id);
+    try {
+      const res = await fnPublish({ data: { videoId: id, scheduleAt: utc.toISOString() } });
+      if (!res.ok) return toast.error(res.error || "Schedule failed");
+      toast.success(`Scheduled for ${labels.uk}`);
+      toast.message(`UTC fire time: ${labels.utc}`);
+      if ((res as any).calendarLink) {
+        toast.message("Add to Google Calendar", {
+          action: {
+            label: "Open",
+            onClick: () => window.open((res as any).calendarLink, "_blank"),
+          },
+        });
+      }
+      setScheduleFor(null);
+      load();
+    } finally {
+      setPostBusyId(null);
+    }
+  }
+
   return (
     <SeriesShell
       title="Videos"
-      subtitle="Review generated videos before they publish. Generate or refresh YouTube thumbnails anytime."
+      subtitle="Generate, review, post now, or schedule automatic posting. Thumbnails only for 16:9 long videos."
     >
       {loading ? (
         <div className="flex justify-center py-20">
@@ -91,6 +163,7 @@ function SeriesVideosPage() {
               v.thumbnailUrl &&
               !String(v.thumbnailUrl).includes(".mp4") &&
               v.thumbnailUrl !== v.mediaUrl;
+            const canPost = v.status === "ready" && v.mediaUrl;
             return (
               <div
                 key={v.id}
@@ -108,12 +181,6 @@ function SeriesVideosPage() {
                       alt={v.title || "Thumbnail"}
                       className="h-full w-full object-cover"
                     />
-                  ) : v.thumbnailUrl ? (
-                    <img
-                      src={v.thumbnailUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
                   ) : v.mediaUrl ? (
                     <video src={v.mediaUrl} className="h-full w-full object-cover" muted />
                   ) : (
@@ -124,22 +191,35 @@ function SeriesVideosPage() {
                 </div>
                 <div className="flex-1 min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="font-medium truncate">{v.title || "Untitled episode"}</h3>
-                    <Badge variant="secondary">{v.status}</Badge>
-                    {isLong && (
+                    <h3 className="font-medium truncate">{v.title || "Untitled story"}</h3>
+                    {v.status === "published" ? (
+                      <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white gap-1">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Posted
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary">{v.status}</Badge>
+                    )}
+                    {isLong ? (
                       <Badge variant="outline" className="text-[10px]">
                         16:9 long
                       </Badge>
-                    )}
-                    {v.thumbnailUrl && (
-                      <Badge className="bg-emerald-500/15 text-emerald-700 border-0 text-[10px]">
-                        Thumbnail
+                    ) : (
+                      <Badge variant="outline" className="text-[10px]">
+                        9:16 reel
                       </Badge>
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {v.series?.name} · scheduled{" "}
-                    {v.scheduledAt ? new Date(v.scheduledAt).toLocaleString() : "—"}
+                    {v.series?.name} ·{" "}
+                    {v.status === "published" && v.publishedAt
+                      ? `posted ${formatScheduleLabels(new Date(v.publishedAt)).uk}`
+                      : v.scheduledAt
+                        ? (() => {
+                            const { uk, utc } = formatScheduleLabels(new Date(v.scheduledAt));
+                            return `scheduled ${uk} · fires ${utc}`;
+                          })()
+                        : "—"}
                   </p>
                   {(v.description || v.caption) && (
                     <p className="text-sm text-muted-foreground line-clamp-2">
@@ -147,6 +227,45 @@ function SeriesVideosPage() {
                     </p>
                   )}
                   {v.error && <p className="text-xs text-destructive">{v.error}</p>}
+                  {scheduleFor === v.id && (
+                    <div className="rounded-lg border border-border/50 p-3 space-y-2 max-w-sm">
+                      <Label className="text-xs">Schedule post (UK time)</Label>
+                      <Input
+                        type="datetime-local"
+                        value={scheduleAt}
+                        onChange={(e) => setScheduleAt(e.target.value)}
+                      />
+                      {scheduleAt &&
+                        (() => {
+                          try {
+                            const { uk, utc } = formatScheduleLabels(
+                              londonDatetimeLocalToUtc(scheduleAt),
+                            );
+                            return (
+                              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                UK: {uk}
+                                <br />
+                                UTC fire time: {utc}
+                              </p>
+                            );
+                          } catch {
+                            return null;
+                          }
+                        })()}
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => onSchedulePost(v.id)}
+                          disabled={postBusyId === v.id}
+                        >
+                          Confirm schedule
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => setScheduleFor(null)}>
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div className="flex sm:flex-col gap-2 shrink-0">
                   {(v.status === "pending" || v.status === "failed") && (
@@ -166,7 +285,39 @@ function SeriesVideosPage() {
                       )}
                     </Button>
                   )}
-                  {(v.status === "ready" || v.status === "published") && (
+                  {canPost && (
+                    <>
+                      <Button
+                        size="sm"
+                        onClick={() => onPostNow(v.id)}
+                        disabled={postBusyId === v.id}
+                        className="gradient-bg text-primary-foreground w-full"
+                      >
+                        {postBusyId === v.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Send className="h-3.5 w-3.5 mr-1.5" />
+                            Post now
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => {
+                          setScheduleFor(v.id);
+                          const d = new Date(Date.now() + 2 * 60 * 60_000);
+                          setScheduleAt(toLondonDatetimeLocalValue(d));
+                        }}
+                      >
+                        <CalendarClock className="h-3.5 w-3.5 mr-1.5" />
+                        Schedule
+                      </Button>
+                    </>
+                  )}
+                  {isLong && (v.status === "ready" || v.status === "published") && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -184,19 +335,21 @@ function SeriesVideosPage() {
                       )}
                     </Button>
                   )}
-                  {v.thumbnailUrl && (
-                    <a href={v.thumbnailUrl} target="_blank" rel="noreferrer">
-                      <Button size="sm" variant="ghost" className="w-full">
-                        View thumb
-                      </Button>
-                    </a>
-                  )}
                   {v.mediaUrl && (
-                    <a href={v.mediaUrl} target="_blank" rel="noreferrer">
-                      <Button size="sm" variant="outline" className="w-full">
-                        Open video
-                      </Button>
-                    </a>
+                    <div className="space-y-2">
+                      <video
+                        src={v.mediaUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-full max-w-[220px] rounded-lg bg-black"
+                      />
+                      <a href={v.mediaUrl} target="_blank" rel="noreferrer">
+                        <Button size="sm" variant="outline" className="w-full">
+                          Open video
+                        </Button>
+                      </a>
+                    </div>
                   )}
                 </div>
               </div>

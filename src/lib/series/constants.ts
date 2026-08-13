@@ -1,11 +1,11 @@
 export const SERIES_STEPS = [
   { id: 1, key: "niche", title: "Format, type & niche", optional: false },
-  { id: 2, key: "voice", title: "Voice", optional: false },
+  { id: 2, key: "voice", title: "Voice", optional: true },
   { id: 3, key: "music", title: "Background Music", optional: true },
-  { id: 4, key: "art", title: "Art Style", optional: false },
-  { id: 5, key: "caption", title: "Caption Style", optional: false },
+  { id: 4, key: "art", title: "Art Style", optional: true },
+  { id: 5, key: "caption", title: "Caption Style", optional: true },
   { id: 6, key: "effects", title: "Visual mode & effects", optional: true },
-  { id: 7, key: "social", title: "Connect Social Accounts", optional: false },
+  { id: 7, key: "social", title: "Connect Social Accounts", optional: true },
   { id: 8, key: "details", title: "Series Details", optional: false },
 ] as const;
 
@@ -71,7 +71,7 @@ export const NICHE_PRESETS = [
   {
     id: "scary-stories",
     label: "Scary stories",
-    description: "Scary stories that give you goosebumps",
+    description: "Creepy encounters, psychological horror, and twist/paranormal stories",
   },
   {
     id: "history",
@@ -102,6 +102,51 @@ export const NICHE_PRESETS = [
     id: "good-morals",
     label: "Good morals",
     description: "Viral videos that teach people good morals and life lessons.",
+  },
+  {
+    id: "babykids",
+    label: "Babykids",
+    description: "Wholesome baby and toddler moments, cute clips, and family-friendly stories.",
+  },
+  {
+    id: "baby-content",
+    label: "Baby content",
+    description: "Adorable baby milestones, parenting tips, and heartwarming infant moments.",
+  },
+  {
+    id: "life-hack",
+    label: "Life hack",
+    description: "Quick practical life hacks people can use immediately.",
+  },
+  {
+    id: "psychology-facts",
+    label: "Psychology facts",
+    description: "Viral psychology facts that explain how the mind really works.",
+  },
+  {
+    id: "mind-blowing-fact",
+    label: "Mind blowing fact",
+    description: "Shocking trivia and mind-blowing facts that stop the scroll.",
+  },
+  {
+    id: "amazing-animal-stories",
+    label: "Amazing animal stories",
+    description: "Incredible animal stories, wildlife wonders, and emotional pet moments.",
+  },
+  {
+    id: "ai-future-technology",
+    label: "AI and future technology",
+    description: "AI breakthroughs, future tech, and what comes next for humanity.",
+  },
+  {
+    id: "luxury-billionaires",
+    label: "Luxury and billionaires",
+    description: "Luxury lifestyles, billionaire habits, wealth stories, and high-end worlds.",
+  },
+  {
+    id: "space-nasa",
+    label: "Space and NASA",
+    description: "Space discoveries, NASA missions, planets, and cosmic wonders.",
   },
 ] as const;
 
@@ -172,6 +217,7 @@ export function nichesForContentMode(mode: string) {
   return NICHE_PRESETS;
 }
 
+/** ElevenLabs voice library samples for narration (skip for UGC / commercial / silent video). */
 export const VOICE_PRESETS = [
   {
     id: "JBFqnCBsd6RMkjVDRZzb",
@@ -192,6 +238,76 @@ export const VOICE_PRESETS = [
     id: "cgSgspJ2msm6clMCkdW9",
     label: "Jessica",
     description: "Bright conversational tone",
+  },
+  {
+    id: "21m00Tcm4TlvDq8ikWAM",
+    label: "Rachel",
+    description: "Calm, clear American female — great for explainers",
+  },
+  {
+    id: "pNInz6obpgDQGcFmaJgB",
+    label: "Adam",
+    description: "Deep American male narrator",
+  },
+  {
+    id: "ErXwobaYiN019PkySvjV",
+    label: "Antoni",
+    description: "Well-rounded, friendly male voice",
+  },
+  {
+    id: "VR6AewLTigWG4xSOukaG",
+    label: "Arnold",
+    description: "Crisp, authoritative male voice",
+  },
+  {
+    id: "TxGEqnHWrfWFTfGW9XjX",
+    label: "Josh",
+    description: "Young, natural storytelling male",
+  },
+  {
+    id: "MF3mGyEYCl7XYWbV9V6O",
+    label: "Elli",
+    description: "Expressive young female narrator",
+  },
+  {
+    id: "AZnzlk1XvdvUeBnXmlld",
+    label: "Domi",
+    description: "Strong, confident female voice",
+  },
+  {
+    id: "yoZ06aMxZJJ28mfd3POQ",
+    label: "Sam",
+    description: "Dynamic raspy male — bold hooks",
+  },
+  {
+    id: "ThT5KcBeYPX3keUQqHPh",
+    label: "Dorothy",
+    description: "Pleasant British female narrator",
+  },
+  {
+    id: "XrExE9yKIg1WjnnlVkGX",
+    label: "Matilda",
+    description: "Warm, knowledgeable female voice",
+  },
+  {
+    id: "nPczCjzI2devNBz1zQrb",
+    label: "Brian",
+    description: "Deep, resonant narration for documentaries",
+  },
+  {
+    id: "iP95p4xoKVk53GoZ742B",
+    label: "Chris",
+    description: "Casual natural male — great for tips & facts",
+  },
+  {
+    id: "cjVigY5qzO86Huf0OWal",
+    label: "Eric",
+    description: "Friendly mid-range male narrator",
+  },
+  {
+    id: "pFZP5JQG7iQjIQuC4Bku",
+    label: "Lily",
+    description: "Warm British female storytelling voice",
   },
 ] as const;
 
@@ -252,6 +368,90 @@ export const MUSIC_PRESETS = [
     prompt: "Modern clean commercial advertising underscore, confident pulse, no vocals",
     gradient: "from-sky-500 to-blue-700",
   },
+  {
+    id: "soft-lullaby",
+    label: "Soft lullaby",
+    description: "Gentle warm music for baby and kids content",
+    prompt: "Soft warm lullaby music box melody, gentle and wholesome, no vocals",
+    gradient: "from-rose-300 to-pink-500",
+  },
+  {
+    id: "playful-kids",
+    label: "Playful kids",
+    description: "Light bouncy underscore for cute family clips",
+    prompt: "Playful light bouncy kids background music, cheerful xylophone vibes, no vocals",
+    gradient: "from-yellow-300 to-orange-400",
+  },
+  {
+    id: "curious-facts",
+    label: "Curious facts",
+    description: "Bright inquisitive vibe for psychology and trivia",
+    prompt: "Curious bright documentary underscore for facts and psychology, light intrigue, no vocals",
+    gradient: "from-fuchsia-400 to-purple-500",
+  },
+  {
+    id: "mind-expand",
+    label: "Mind expand",
+    description: "Wow-factor energy for mind-blowing reveals",
+    prompt: "Mind-blowing reveal soundtrack, rising curiosity and awe, cinematic short-form, no vocals",
+    gradient: "from-violet-500 to-fuchsia-600",
+  },
+  {
+    id: "wildlife-wonder",
+    label: "Wildlife wonder",
+    description: "Nature documentary feel for animal stories",
+    prompt: "Nature documentary wildlife underscore, organic wonder and emotion, soft strings, no vocals",
+    gradient: "from-green-500 to-emerald-700",
+  },
+  {
+    id: "future-tech",
+    label: "Future tech",
+    description: "Sleek sci-fi pulse for AI and technology",
+    prompt: "Sleek futuristic AI technology underscore, clean synth pulse, modern sci-fi, no vocals",
+    gradient: "from-cyan-400 to-blue-600",
+  },
+  {
+    id: "luxury-lifestyle",
+    label: "Luxury lifestyle",
+    description: "Premium elegant mood for wealth and luxury",
+    prompt: "Luxury lifestyle underscore, elegant premium piano and soft beat, glamorous, no vocals",
+    gradient: "from-amber-400 to-yellow-600",
+  },
+  {
+    id: "cosmic-nasa",
+    label: "Cosmic NASA",
+    description: "Vast ambient score for space and NASA",
+    prompt: "Vast ambient space soundtrack, cosmic wonder, NASA documentary feel, soft pads, no vocals",
+    gradient: "from-slate-700 to-indigo-800",
+  },
+  {
+    id: "life-hack-pop",
+    label: "Life hack pop",
+    description: "Snappy positive beat for tips and hacks",
+    prompt: "Snappy upbeat life-hack background track, positive and punchy, no vocals",
+    gradient: "from-lime-400 to-green-500",
+  },
+  {
+    id: "motivational-rise",
+    label: "Motivational rise",
+    description: "Inspiring build for stoic and life-lesson videos",
+    prompt: "Inspiring motivational cinematic rise, hopeful and determined, no vocals",
+    gradient: "from-orange-500 to-rose-500",
+  },
+  {
+    id: "true-crime-dark",
+    label: "True crime dark",
+    description: "Dark investigative pulse for crime stories",
+    prompt: "Dark investigative true crime underscore, tense low pulse, documentary style, no vocals",
+    gradient: "from-stone-600 to-red-900",
+  },
+  {
+    id: "ancient-epic",
+    label: "Ancient epic",
+    description: "Mythic drums and strings for history and legends",
+    prompt: "Ancient epic mythic soundtrack, drums and strings, historical storytelling, no vocals",
+    gradient: "from-yellow-700 to-amber-900",
+  },
 ] as const;
 
 export const ART_STYLES = [
@@ -281,10 +481,10 @@ export const ART_STYLES = [
   },
   {
     id: "photoreal",
-    label: "Photoreal / UGC",
+    label: "Photoreal",
     image: "/series/art-styles/modern-cartoon.png",
     promptHint:
-      "photorealistic vertical phone-camera UGC aesthetic, natural lighting, authentic creator look, no illustration",
+      "photorealistic cinematic still, natural lighting, authentic look, no illustration",
   },
   {
     id: "commercial-photo",
@@ -294,6 +494,31 @@ export const ART_STYLES = [
       "polished commercial advertising photography, cinematic product lighting, premium brand look, photoreal",
   },
 ] as const;
+
+/** Faceless keeps illustrated + photoreal styles; UGC/commercial use commercial look only (real video pipeline). */
+export function artStylesForContentMode(mode: string) {
+  if (mode === "ugc" || mode === "commercial") {
+    return ART_STYLES.filter((a) => a.id === "commercial-photo");
+  }
+  return ART_STYLES.filter((a) => a.id !== "commercial-photo");
+}
+
+/** When art style is skipped, AI picks visuals from the script/mood. */
+export const AUTO_ART_STYLE_ID = "auto";
+
+export const AUTO_ART_STYLE_HINT =
+  "Infer the best visual look from the scene and script mood (cinematic, documentary, horror, whimsical, photoreal, etc). Match lighting, color grade, and rendering to the story beat — do not force a fixed cartoon/comic template.";
+
+export function isAutoArtStyle(artStyle?: string | null): boolean {
+  const id = (artStyle || "").trim().toLowerCase();
+  return !id || id === "auto" || id === "none" || id === "skip";
+}
+
+export function resolveArtStyleHint(artStyle?: string | null): string {
+  if (isAutoArtStyle(artStyle)) return AUTO_ART_STYLE_HINT;
+  const found = ART_STYLES.find((a) => a.id === artStyle);
+  return found?.promptHint || artStyle || AUTO_ART_STYLE_HINT;
+}
 
 export const CAPTION_STYLES = [
   { id: "bold-stroke", label: "Bold Stroke", preview: "BOLD" },

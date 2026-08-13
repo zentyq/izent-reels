@@ -10,8 +10,12 @@ function wavespeedKey(): string {
   return k;
 }
 
+function uploadsRoot(): string {
+  return process.env.UPLOADS_DIR || join(process.cwd(), "uploads");
+}
+
 async function saveBuf(buf: Buffer, ext: string) {
-  const dir = join(process.cwd(), "uploads", "series");
+  const dir = join(uploadsRoot(), "series");
   await mkdir(dir, { recursive: true });
   const name = `${Date.now()}-${randomBytes(6).toString("hex")}.${ext}`;
   await writeFile(join(dir, name), buf);
@@ -90,6 +94,54 @@ async function downloadToLocal(remoteUrl: string, extHint = "bin"): Promise<stri
   return saveBuf(buf, ext);
 }
 
+const LLM_BASE = "https://llm.wavespeed.ai/v1";
+
+/** OpenAI-compatible chat via WaveSpeed LLM (default: openai/gpt-5.4-mini). */
+export async function waveSpeedChatCompletion(input: {
+  system: string;
+  user: string;
+  temperature?: number;
+  json?: boolean;
+  model?: string;
+}): Promise<string> {
+  const model =
+    input.model ||
+    process.env.WAVESPEED_LLM_MODEL ||
+    "openai/gpt-5.4-mini";
+  const body: Record<string, unknown> = {
+    model,
+    temperature: input.temperature ?? 0.9,
+    messages: [
+      { role: "system", content: input.system },
+      { role: "user", content: input.user },
+    ],
+  };
+  if (input.json !== false) {
+    body.response_format = { type: "json_object" };
+  }
+
+  // Single attempt only — do not retry on failure (avoids wasting WaveSpeed LLM tokens)
+  const res = await fetch(`${LLM_BASE}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${wavespeedKey()}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(
+      json?.error?.message || json?.message || `WaveSpeed LLM ${res.status}`,
+    );
+  }
+  const text = json?.choices?.[0]?.message?.content;
+  if (!text || typeof text !== "string") {
+    throw new Error("WaveSpeed LLM returned empty content");
+  }
+  return text;
+}
+
 async function toWaveSpeedImageInput(imageUrl: string): Promise<string> {
   // Already a public HTTPS URL — use directly
   if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
@@ -98,7 +150,7 @@ async function toWaveSpeedImageInput(imageUrl: string): Promise<string> {
   // Local upload → data URI (WaveSpeed accepts these for many models)
   let buf: Buffer;
   if (imageUrl.startsWith("/api/uploads/")) {
-    buf = await readFile(join(process.cwd(), "uploads", imageUrl.replace("/api/uploads/", "")));
+    buf = await readFile(join(uploadsRoot(), imageUrl.replace("/api/uploads/", "")));
   } else if (imageUrl.startsWith("/series/") || imageUrl.startsWith("/")) {
     const rel = imageUrl.replace(/^\/public\//, "").replace(/^\//, "");
     buf = await readFile(join(process.cwd(), "public", rel));

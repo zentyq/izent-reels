@@ -191,22 +191,25 @@ export function AgentChat() {
 
   useEffect(() => {
     async function load() {
-      // 1. Check local storage for globally selected project
-      const savedPid = localStorage.getItem("projectId");
-      if (savedPid) {
-        setProjectId(savedPid);
-        return;
-      }
-
-      // 2. Fetch projects and pick the first one
+      // Always resolve against THIS user's projects — never trust a stale localStorage key
+      // from another account on the same browser.
       const r = await fnListProjects();
-      const pArr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.data) ? r.data.data : []);
-      
+      const pArr = Array.isArray(r.data)
+        ? r.data
+        : Array.isArray(r.data?.data)
+          ? r.data.data
+          : [];
+
       if (pArr.length > 0) {
-        const pid = pArr[0].projectId || pArr[0].id || pArr[0]._id;
+        const savedPid = localStorage.getItem("projectId");
+        const match = savedPid && pArr.find((p: any) => (p.projectId || p.id || p._id) === savedPid);
+        const pid = match
+          ? savedPid
+          : pArr[0].projectId || pArr[0].id || pArr[0]._id;
         setProjectId(pid);
-        localStorage.setItem("projectId", pid); // save for later
+        localStorage.setItem("projectId", pid);
       } else {
+        localStorage.removeItem("projectId");
         console.warn("No projects returned despite backend auto-creation");
       }
     }

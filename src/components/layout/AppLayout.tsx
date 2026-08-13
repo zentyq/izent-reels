@@ -81,6 +81,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   async function handleLogout() {
     await fnLogout();
+    try {
+      localStorage.removeItem("projectId");
+    } catch {
+      /* ignore */
+    }
     navigate({ to: "/login" });
   }
 

@@ -8,12 +8,21 @@ function requireEnv(name: string): string {
   return v;
 }
 
+async function resolveFfmpegPath(): Promise<string> {
+  const { resolveFfmpegPath: resolve } = await import("../ffmpeg-path.server");
+  return resolve();
+}
+
+function uploadsRoot(): string {
+  return process.env.UPLOADS_DIR || join(process.cwd(), "uploads");
+}
+
 export async function saveUploadBuffer(
   buf: Buffer,
   ext: string,
   subdir = "series",
 ): Promise<{ path: string; publicUrl: string }> {
-  const dir = join(process.cwd(), "uploads", subdir);
+  const dir = join(uploadsRoot(), subdir);
   await mkdir(dir, { recursive: true });
   const name = `${Date.now()}-${randomBytes(6).toString("hex")}.${ext}`;
   const path = join(dir, name);
@@ -32,15 +41,67 @@ function contentModeSystemHint(mode: string): string {
   }
 }
 
-/** Script + caption (+ long-form description) via Gemini, falling back to ChatGPT. */
+const SCARY_STORY_PATTERNS = [
+  {
+    id: "creepy-encounter",
+    label: "Short, creepy encounter",
+    brief: `PATTERN: Short, creepy encounter.
+Write a brief real-feeling encounter that turns wrong fast — stranger, place, object, or sound.
+Build dread in ordinary details. End with a chilling final beat. Self-contained: beginning, middle, end.`,
+  },
+  {
+    id: "psychological",
+    label: "Strong psychological horror",
+    brief: `PATTERN: Strong psychological horror.
+Focus on paranoia, memory gaps, unreliable perception, isolation, or a mind unraveling.
+Atmosphere over gore. End with a disturbing revelation or irreversible realization. Self-contained.`,
+  },
+  {
+    id: "twist-paranormal",
+    label: "Big twist / paranormal story",
+    brief: `PATTERN: Big twist / paranormal story.
+Set up a believable situation, then land a sharp paranormal or reality-break twist near the end.
+Foreshadow lightly; the twist should reframe what the listener thought was happening. Self-contained.`,
+  },
+] as const;
+
+export function isScaryStoriesNiche(niche: string): boolean {
+  const n = (niche || "").toLowerCase();
+  return (
+    n.includes("scary-stories") ||
+    n.includes("scary stor") ||
+    (n.includes("scary") && n.includes("stor")) ||
+    n.includes("horror stor") ||
+    n.includes("creepypasta") ||
+    n.includes("creepy encounter") ||
+    n.includes("psychological horror") ||
+    (n.includes("paranormal") && (n.includes("twist") || n.includes("stor"))) ||
+    n.includes("goosebumps")
+  );
+}
+
+function scaryPatternForIndex(storyIndex: number) {
+  const i = ((storyIndex % SCARY_STORY_PATTERNS.length) + SCARY_STORY_PATTERNS.length) % SCARY_STORY_PATTERNS.length;
+  return SCARY_STORY_PATTERNS[i];
+}
+
+/** Script + caption (+ long-form description) via WaveSpeed GPT-5.4 mini. */
 export async function generateScriptContent(input: {
   niche: string;
   exampleScript?: string | null;
   durationSec: number;
   artStyle: string;
   youtubeBrief?: string | null;
+  /** Keywords from YouTube Data API research — forced into caption/description hashtags */
+  youtubeKeywords?: string[] | null;
   contentMode?: string | null;
   videoFormat?: string | null;
+  /** When true / artStyle is auto — let scene visuals follow the script mood */
+  autoArtStyle?: boolean;
+  /** Recent titles only — avoid repeats; never continue prior plots */
+  recentTitles?: string[] | null;
+  /** 0-based index used to rotate scary-story patterns */
+  storyIndex?: number;
 }): Promise<{
   title: string;
   script: string;
@@ -56,77 +117,217 @@ export async function generateScriptContent(input: {
   const sceneCount = sceneCountForDuration(input.durationSec, format);
   const mode = input.contentMode || "faceless";
   const isLong = format === "long";
+  const autoArt = !!input.autoArtStyle;
+  const storyIndex = Math.max(0, input.storyIndex ?? 0);
+  const scary = isScaryStoriesNiche(input.niche);
+  const scaryPattern = scary ? scaryPatternForIndex(storyIndex) : null;
+  const recent = (input.recentTitles || []).filter(Boolean).slice(-8);
+
+  const standaloneRules = `CRITICAL STORY RULES:
+- Every video is ONE complete standalone story with a clear beginning, middle, and end.
+- Do NOT write episodes, sequels, "part 2", cliffhangers that demand a next video, or continuing arcs.
+- Do NOT reference prior videos as previous episodes. Titles must not say Episode/Part/Ep.
+- End with closure (chilling or satisfying) so the story finishes in this video.`;
+
+  const avoidDup =
+    recent.length > 0
+      ? `\nDo NOT reuse these recent titles or the same core plot:\n${recent.map((t) => `- ${t}`).join("\n")}\n`
+      : "";
+
+  const scaryBlock = scaryPattern
+    ? `\n=== SCARY STORIES PATTERN (required) ===
+Use this exact pattern for THIS video: ${scaryPattern.label}
+${scaryPattern.brief}
+=== END PATTERN ===\n`
+    : "";
+
+  const styleLine = autoArt
+    ? `scenePrompts: exactly ${sceneCount} DIFFERENT vivid scene descriptions for ${aspect} visuals. For EACH scene, include a short visual-style cue that fits THAT beat of the script (e.g. photoreal night documentary, watercolor mythic, cinematic horror). Do not lock every scene to one fixed art style. No text/watermarks.`
+    : `scenePrompts: exactly ${sceneCount} DIFFERENT vivid scene descriptions for ${aspect} visuals in ${input.artStyle} style. Each scene MUST be a distinct moment / shot. No text/watermarks.`;
 
   const system = `${contentModeSystemHint(mode)}
 Format: ${isLong ? "LONG horizontal 16:9 YouTube/Facebook video" : "SHORT vertical 9:16 reel/Short"}.
+${standaloneRules}
 Return STRICT JSON:
 {"title":"...","script":"...","caption":"...","description":"...","imagePrompt":"...","scenePrompts":["..."],"thumbnailPrompt":"..."}
-title: catchy ${isLong ? "YouTube" : "Shorts"} title (max ${isLong ? 90 : 70} chars).
-script: spoken narration for ~${input.durationSec}s (${isLong ? "detailed, chapter-like pacing, keep viewers watching" : "hook in first sentence"}, no stage directions).
-caption: social post caption with 4-8 hashtags.
-description: ${isLong ? "full YouTube/Facebook description (2–4 paragraphs + timestamps vibe + CTA + hashtags)" : "short description (1–2 sentences), can mirror caption"}.
-imagePrompt: first-scene visual description (${aspect}).
-scenePrompts: exactly ${sceneCount} DIFFERENT vivid scene descriptions for ${aspect} visuals in ${input.artStyle} style. Each scene MUST be a distinct moment / shot. No text/watermarks.
-thumbnailPrompt: eye-catching ${aspect === "16:9" ? "16:9 YouTube thumbnail" : "9:16 cover"} composition for this episode (no platform UI chrome, bold subject, readable if text is implied in scene only — prefer no literal text).`;
+title: catchy ${isLong ? "YouTube" : "Shorts"} title (max ${isLong ? 90 : 70} chars). Never include Episode/Part numbers.
+script: spoken narration for ~${input.durationSec}s (${isLong ? "detailed pacing, keep viewers watching" : "hook in first sentence"}, no stage directions). Complete story arc in this script alone.
+caption: social post caption with 4-8 hashtags drawn from the YouTube research keywords/topics (use #CamelCase tags).
+description: ${isLong ? "full YouTube/Facebook description (2–4 paragraphs + timestamps vibe + CTA + hashtags from research)" : "short description (1–2 sentences) ending with the same research hashtags"}.
+imagePrompt: first-scene visual description (${aspect})${autoArt ? " including an appropriate visual style inferred from the script" : ""}.
+${styleLine}
+thumbnailPrompt: eye-catching ${aspect === "16:9" ? "16:9 YouTube thumbnail" : "9:16 cover"} composition for this story (no platform UI chrome, bold subject, readable if text is implied in scene only — prefer no literal text).`;
 
   const user = `Content mode: ${mode}
 Video format: ${format} (${aspect})
 Niche: ${input.niche}
 ${input.exampleScript ? `Match this style/tone:\n${input.exampleScript}\n` : ""}
 ${input.youtubeBrief ? `\n=== YOUTUBE RESEARCH (use before writing) ===\n${input.youtubeBrief}\n=== END RESEARCH ===\n` : ""}
-Write one unique ${isLong ? "long-form" : "viral short"} episode with ${sceneCount} distinct visual scenes.`;
+${scaryBlock}${avoidDup}
+Write one unique, self-contained ${isLong ? "long-form" : "viral short"} story with ${sceneCount} distinct visual scenes. Start and finish in this video — no sequel bait.`;
 
-  try {
-    return await geminiJson(system, user, sceneCount);
-  } catch (e) {
-    console.warn("Gemini script failed, trying OpenAI:", (e as Error).message);
-    if (!process.env.OPENAI_API_KEY) throw e;
-    return await openAiJson(system, user, sceneCount);
-  }
-}
-
-async function geminiJson(system: string, user: string, sceneCount: number) {
-  const key = requireEnv("GEMINI_API_KEY");
-  const model = process.env.GEMINI_MODEL || "gemini-flash-latest";
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { temperature: 0.95, responseMimeType: "application/json" },
-      }),
-    },
-  );
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error?.message || `Gemini ${res.status}`);
-  const text = body?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  return parseScriptJson(text, sceneCount);
-}
-
-async function openAiJson(system: string, user: string, sceneCount: number) {
-  const key = requireEnv("OPENAI_API_KEY");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-      temperature: 0.95,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-    }),
+  const { waveSpeedChatCompletion } = await import("./wavespeed.server");
+  const text = await waveSpeedChatCompletion({
+    system,
+    user,
+    temperature: 0.95,
+    json: true,
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body?.error?.message || `OpenAI ${res.status}`);
-  return parseScriptJson(body?.choices?.[0]?.message?.content || "", sceneCount);
+  const result = parseScriptJson(text, sceneCount);
+  return await withResearchHashtags(result, input.youtubeKeywords);
+}
+
+/** AI niche detect + script polish for a YouTube transcript. */
+export async function reviewYouTubeScript(input: {
+  transcript: string;
+  title?: string | null;
+  durationSec: number;
+  niches: Array<{ id: string; label: string; description: string }>;
+}): Promise<{
+  nicheId: string | null;
+  nicheLabel: string;
+  finalScript: string;
+  needsEdit: boolean;
+  editNotes: string;
+  suggestedTitle: string;
+}> {
+  const { waveSpeedChatCompletion } = await import("./wavespeed.server");
+  const nicheList = input.niches
+    .map((n) => `- ${n.id}: ${n.label} — ${n.description}`)
+    .join("\n");
+
+  const system = `You adapt YouTube transcripts into faceless short-form narration scripts.
+Return STRICT JSON:
+{"nicheId":"preset-id-or-null","nicheLabel":"...","needsEdit":true|false,"editNotes":"...","suggestedTitle":"...","finalScript":"..."}
+Rules:
+- Pick the best matching nicheId from the provided preset list, or null if none fit (then nicheLabel is a short custom niche).
+- needsEdit=true if the transcript needs rewriting for faceless narration (subscribe CTAs, ums, part 2, too long/short, stage directions, multi-speaker chat, etc.).
+- needsEdit=false only if a light cleanup is enough and the core narration already works spoken aloud.
+- finalScript: spoken narration for ~${input.durationSec}s, standalone story with beginning/middle/end. No "subscribe", "like and comment", "part 2", episode labels, or channel shoutouts.
+- Keep the core idea/facts/story from the source. Do not invent a totally unrelated plot.
+- suggestedTitle: catchy Shorts title max 70 chars, no Episode/Part.`;
+
+  const user = `Source title: ${input.title || "Unknown"}
+Target duration: ~${input.durationSec}s
+Preset niches:
+${nicheList}
+
+Transcript:
+${input.transcript.slice(0, 12000)}`;
+
+  const text = await waveSpeedChatCompletion({
+    system,
+    user,
+    temperature: 0.55,
+    json: true,
+  });
+
+  let parsed: any = {};
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) parsed = JSON.parse(m[0]);
+  }
+
+  const nicheIdRaw = parsed.nicheId ? String(parsed.nicheId) : null;
+  const nicheMatch = nicheIdRaw
+    ? input.niches.find((n) => n.id === nicheIdRaw)
+    : null;
+  const finalScript = String(parsed.finalScript || input.transcript)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (finalScript.length < 40) {
+    throw new Error("AI review returned an empty script");
+  }
+
+  return {
+    nicheId: nicheMatch?.id || null,
+    nicheLabel: nicheMatch?.label || String(parsed.nicheLabel || "Custom").slice(0, 120),
+    finalScript: finalScript.slice(0, 12000),
+    needsEdit: !!parsed.needsEdit,
+    editNotes: String(parsed.editNotes || "").slice(0, 500),
+    suggestedTitle: String(parsed.suggestedTitle || input.title || "Untitled").slice(0, 90),
+  };
+}
+
+/**
+ * Derive title/caption/scenes from an already-locked narration script
+ * (YouTube import) — do not invent a new story.
+ */
+export async function deriveAssetsFromLockedScript(input: {
+  script: string;
+  niche: string;
+  titleHint?: string | null;
+  durationSec: number;
+  artStyle: string;
+  autoArtStyle?: boolean;
+  contentMode?: string | null;
+  videoFormat?: string | null;
+  youtubeKeywords?: string[] | null;
+}): Promise<{
+  title: string;
+  script: string;
+  caption: string;
+  description: string;
+  imagePrompt: string;
+  scenePrompts: string[];
+  thumbnailPrompt: string;
+}> {
+  const { sceneCountForDuration, aspectForFormat } = await import("./constants");
+  const format = input.videoFormat || "short";
+  const aspect = aspectForFormat(format);
+  const sceneCount = sceneCountForDuration(input.durationSec, format);
+  const autoArt = !!input.autoArtStyle;
+  const script = input.script.trim();
+
+  const styleLine = autoArt
+    ? `scenePrompts: exactly ${sceneCount} DIFFERENT vivid scene descriptions for ${aspect} visuals matching each beat. Include a short visual-style cue per scene. No text/watermarks.`
+    : `scenePrompts: exactly ${sceneCount} DIFFERENT vivid scene descriptions for ${aspect} visuals in ${input.artStyle} style. No text/watermarks.`;
+
+  const system = `You prepare publishing assets from a FIXED narration script. Do NOT rewrite the story or invent a new plot.
+Return STRICT JSON:
+{"title":"...","script":"...","caption":"...","description":"...","imagePrompt":"...","scenePrompts":["..."],"thumbnailPrompt":"..."}
+- script: copy the provided narration almost verbatim (tiny cleanup of whitespace only).
+- title: catchy title max 70 chars (hint may be used). No Episode/Part.
+- caption: social caption with 4-8 hashtags.
+- description: 1–2 sentences + hashtags.
+- imagePrompt: first scene visual (${aspect}).
+- ${styleLine}
+- thumbnailPrompt: cover composition for this story.`;
+
+  const user = `Niche: ${input.niche}
+Title hint: ${input.titleHint || ""}
+Duration ~${input.durationSec}s
+LOCKED SCRIPT (keep this story):
+${script}`;
+
+  const { waveSpeedChatCompletion } = await import("./wavespeed.server");
+  const text = await waveSpeedChatCompletion({
+    system,
+    user,
+    temperature: 0.5,
+    json: true,
+  });
+  const result = parseScriptJson(text, sceneCount);
+  // Force locked script — never replace with a new story
+  result.script = script;
+  if (input.titleHint && (!result.title || result.title === "Untitled")) {
+    result.title = input.titleHint.slice(0, 90);
+  }
+  return await withResearchHashtags(result, input.youtubeKeywords);
+}
+
+async function withResearchHashtags<
+  T extends { caption: string; description: string },
+>(content: T, keywords?: string[] | null): Promise<T> {
+  if (!keywords?.length) return content;
+  const { ensureResearchHashtags } = await import("./youtube-research");
+  return {
+    ...content,
+    caption: ensureResearchHashtags(content.caption, keywords, 8),
+    description: ensureResearchHashtags(content.description, keywords, 8),
+  };
 }
 
 function parseScriptJson(text: string, sceneCount = 4) {
@@ -167,100 +368,81 @@ function parseScriptJson(text: string, sceneCount = 4) {
 
 /**
  * Generate a NEW scene image.
- * referenceImage is a product/brand/subject photo (UGC/commercial) or art-style sample —
+ * referenceImage(s) are product/brand/subject photos (UGC/commercial) or an art-style sample —
  * never used as the final frame itself.
  */
 export async function generateSceneImage(
   prompt: string,
   artStyleHint: string,
-  referenceImage?: string,
+  referenceImage?: string | string[] | null,
   aspectRatio: "9:16" | "16:9" = "9:16",
 ): Promise<{ localUrl: string; remoteUrl?: string }> {
+  const refs = (Array.isArray(referenceImage) ? referenceImage : referenceImage ? [referenceImage] : [])
+    .filter(Boolean) as string[];
   const orientation = aspectRatio === "16:9" ? "horizontal 16:9 widescreen" : "vertical 9:16";
-  const hasProductRef = Boolean(referenceImage);
+  const hasProductRef = refs.length > 0;
+  const auto =
+    !artStyleHint ||
+    /infer the best visual look|do not force a fixed/i.test(artStyleHint) ||
+    artStyleHint === "auto";
+  const styleBlock = auto
+    ? `Visual style: choose the most fitting look for THIS scene from the script mood and subject (photoreal, cinematic, documentary, illustrated, mythic, horror, etc). Stay consistent with the story beat — do not force an unrelated cartoon/comic template.`
+    : `Art/look to MATCH (lines, shading, colors, rendering): ${artStyleHint}.`;
   const full = hasProductRef
     ? `Create a brand-new ${orientation} scene: ${prompt}.
-Art/look: ${artStyleHint}.
-A REFERENCE IMAGE is attached — treat it as the product, brand asset, person, or subject to feature.
-Keep that subject recognizable (colors, shape, logo, packaging, face) across the new scene.
-Invent a NEW composition, camera angle, and setting. Do NOT paste or crop the reference as-is.
+${styleBlock}
+${refs.length} REFERENCE IMAGE(s) are attached — treat them as the product, brand assets, person, or subject library.
+Keep those subjects recognizable (colors, shape, logo, packaging, face) across the new scene.
+Invent a NEW composition, camera angle, and setting. Do NOT paste or crop a reference as-is.
 No text overlays, no watermarks, no logos added by you beyond what is already on the product.`
-    : `Create a brand-new ${orientation} illustration for this scene: ${prompt}.
-Art style to MATCH (lines, shading, colors, rendering): ${artStyleHint}.
-Important: invent a NEW subject and composition for THIS scene. Do NOT copy or reuse the reference image's characters, poses, or background. No text overlays, no watermarks, no logos.`;
+    : `Create a brand-new ${orientation} scene for this story beat: ${prompt}.
+${styleBlock}
+Important: invent a NEW subject and composition for THIS scene. No text overlays, no watermarks, no logos.`;
 
   const errors: string[] = [];
 
-  // When a product/reference photo is provided, prefer multimodal models first
-  if (hasProductRef) {
-    try {
-      const localUrl = await geminiImage(full, referenceImage, aspectRatio);
-      return { localUrl };
-    } catch (e1) {
-      const msg = (e1 as Error).message;
-      console.warn("Gemini (reference) image failed:", msg);
-      errors.push(`Gemini: ${msg}`);
-    }
+  // WaveSpeed only — one attempt (no Gemini/OpenAI/Imagen fallbacks that chain retries)
+  if (!process.env.WAVESPEED_API_KEY) {
+    throw new Error("WAVESPEED_API_KEY is not configured");
   }
-
-  // WaveSpeed (with optional img2img reference)
-  if (process.env.WAVESPEED_API_KEY) {
-    try {
-      const { generateWaveSpeedImage } = await import("./wavespeed");
-      const r = await generateWaveSpeedImage(full, aspectRatio, referenceImage);
-      return { localUrl: r.localUrl, remoteUrl: r.remoteUrl };
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.warn("WaveSpeed image failed:", msg);
-      errors.push(`WaveSpeed: ${msg}`);
-    }
-  }
-
-  // OpenAI
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      const localUrl = await openAiImage(full, aspectRatio);
-      return { localUrl };
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.warn("OpenAI image failed:", msg);
-      errors.push(`OpenAI: ${msg}`);
-    }
-  }
-
-  // Gemini / Imagen (fallback path when no ref, or second try)
-  if (!hasProductRef) {
-    try {
-      const localUrl = await geminiImage(full, referenceImage, aspectRatio);
-      return { localUrl };
-    } catch (e1) {
-      const msg = (e1 as Error).message;
-      console.warn("Gemini image failed:", msg);
-      errors.push(`Gemini: ${msg}`);
-    }
-  }
-
   try {
-    const localUrl = await imagenGenerate(full, aspectRatio);
-    return { localUrl };
-  } catch (eImagen) {
-    const msg = (eImagen as Error).message;
-    console.warn("Imagen failed:", msg);
-    errors.push(`Imagen: ${msg}`);
+    const { generateWaveSpeedImage } = await import("./wavespeed.server");
+    const r = await generateWaveSpeedImage(full, aspectRatio, refs[0] || null);
+    return { localUrl: r.localUrl, remoteUrl: r.remoteUrl };
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.warn("WaveSpeed image failed (no retry):", msg);
+    errors.push(`WaveSpeed: ${msg}`);
   }
 
-  throw new Error(`Scene image generation failed. ${errors.join(" | ")}`);
+  throw new Error(`Scene image generation failed (single attempt). ${errors.join(" | ")}`);
 }
 
 export async function generateSceneImages(
   prompts: string[],
   artStyleHint: string,
-  referenceImage?: string,
+  referenceImages?: string | string[] | null,
   aspectRatio: "9:16" | "16:9" = "9:16",
 ): Promise<Array<{ localUrl: string; remoteUrl?: string }>> {
+  const refs = (Array.isArray(referenceImages)
+    ? referenceImages
+    : referenceImages
+      ? [referenceImages]
+      : []
+  ).filter(Boolean) as string[];
+
   const out: Array<{ localUrl: string; remoteUrl?: string }> = [];
-  for (const prompt of prompts) {
-    out.push(await generateSceneImage(prompt, artStyleHint, referenceImage, aspectRatio));
+  for (let i = 0; i < prompts.length; i++) {
+    // Rotate references across scenes; pass a small batch so Gemini can see variety
+    const batch =
+      refs.length <= 1
+        ? refs
+        : [
+            refs[i % refs.length],
+            refs[(i + 1) % refs.length],
+            refs[(i + 2) % refs.length],
+          ].filter((v, idx, arr) => arr.indexOf(v) === idx);
+    out.push(await generateSceneImage(prompts[i], artStyleHint, batch, aspectRatio));
   }
   return out;
 }
@@ -291,7 +473,7 @@ export async function extractFrameThumbnail(
   const { mkdtemp, rm, writeFile, readFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { spawn } = await import("node:child_process");
-  const ffmpegPath = (await import("ffmpeg-static")).default as string;
+  const ffmpegPath = await resolveFfmpegPath();
   const dir = await mkdtemp(join(tmpdir(), "izent-thumb-"));
   try {
     const inPath = join(dir, "in.mp4");
@@ -342,21 +524,27 @@ export async function generateVideoThumbnail(input: {
   aspectRatio: "9:16" | "16:9";
   mediaUrl?: string | null;
   thumbnailPrompt?: string | null;
-  referenceImageUrl?: string | null;
+  referenceImageUrl?: string | string[] | null;
 }): Promise<string> {
-  const title = (input.title || "Episode").slice(0, 120);
+  const title = (input.title || "Story").slice(0, 120);
   const desc = (input.description || input.script || "").slice(0, 400);
   const niche = input.niche || "";
+  const refs = (Array.isArray(input.referenceImageUrl)
+    ? input.referenceImageUrl
+    : input.referenceImageUrl
+      ? [input.referenceImageUrl]
+      : []
+  ).filter(Boolean) as string[];
   const prompt =
     input.thumbnailPrompt ||
-    `Thumbnail for video titled "${title}". Niche: ${niche}. Story context: ${desc}. Make it look like a top-performing YouTube thumbnail for this exact episode.`;
+    `Thumbnail for video titled "${title}". Niche: ${niche}. Story context: ${desc}. Make it look like a top-performing YouTube thumbnail for this exact story.`;
 
   try {
-    if (input.referenceImageUrl) {
+    if (refs.length) {
       return await generateSceneImage(
         `${prompt}. Feature the attached product/brand/subject reference clearly.`,
         input.artStyleHint,
-        input.referenceImageUrl,
+        refs.slice(0, 4),
         input.aspectRatio,
       ).then((r) => r.localUrl);
     }
@@ -376,7 +564,7 @@ export async function generateVideoThumbnail(input: {
 
 async function geminiImage(
   prompt: string,
-  styleRefPublicPath?: string,
+  styleRefPublicPath?: string | string[] | null,
   aspectRatio: "9:16" | "16:9" = "9:16",
 ): Promise<string> {
   const key = requireEnv("GEMINI_API_KEY");
@@ -388,24 +576,37 @@ async function geminiImage(
     "gemini-3.1-flash-image-preview",
   ].filter(Boolean) as string[];
 
+  const refs = (Array.isArray(styleRefPublicPath)
+    ? styleRefPublicPath
+    : styleRefPublicPath
+      ? [styleRefPublicPath]
+      : []
+  ).filter(Boolean) as string[];
+
   const parts: any[] = [{ text: prompt }];
-  if (styleRefPublicPath) {
+  let loaded = 0;
+  for (const ref of refs.slice(0, 6)) {
     try {
-      const buf = await fetchAsBuffer(styleRefPublicPath);
+      const buf = await fetchAsBuffer(ref);
       parts.push({
         inline_data: {
-          mime_type: styleRefPublicPath.endsWith(".jpg") || styleRefPublicPath.endsWith(".jpeg")
+          mime_type: ref.endsWith(".jpg") || ref.endsWith(".jpeg")
             ? "image/jpeg"
-            : "image/png",
+            : ref.endsWith(".webp")
+              ? "image/webp"
+              : "image/png",
           data: buf.toString("base64"),
         },
       });
-      parts[0] = {
-        text: `${prompt}\n\nThe attached image is a STYLE REFERENCE only. Match its art style closely, but draw a completely different scene.`,
-      };
+      loaded += 1;
     } catch (e) {
       console.warn("Could not load style reference:", (e as Error).message);
     }
+  }
+  if (loaded > 0) {
+    parts[0] = {
+      text: `${prompt}\n\nAttached image(s) are visual references (product/brand/subject or art style). Use them for recognition/style, but create a completely new scene composition.`,
+    };
   }
 
   let lastError = "no image model tried";
@@ -575,7 +776,21 @@ async function openAiImage(
   throw new Error(lastError);
 }
 
-/** AI motion: WaveSpeed (Kling / Seedance / Veo) first, then Google Veo direct. */
+/** Normalize legacy / alias model ids to WaveSpeed paths. */
+function normalizeWaveSpeedVideoModel(model: string): string {
+  if (model === "veo-3.1-fast-generate-preview" || model === "gen4_turbo") {
+    return "kwaivgi/kling-v3.0-std/image-to-video";
+  }
+  if (model === "veo-3.1-generate-preview" || model === "gen4.5") {
+    return "google/veo3.1/image-to-video";
+  }
+  return model;
+}
+
+/**
+ * AI motion: try preferred model, then other WaveSpeed video platforms until one succeeds.
+ * Failed provider attempts are skipped (user: tokens only apply on successful video).
+ */
 export async function generateMotionVideo(input: {
   imageUrl: string;
   remoteImageUrl?: string | null;
@@ -584,30 +799,65 @@ export async function generateMotionVideo(input: {
   durationSec: number;
   aspectRatio?: "9:16" | "16:9";
 }): Promise<string> {
+  const { WAVESPEED_VIDEO_MODELS } = await import("./constants");
+  const preferred = normalizeWaveSpeedVideoModel(input.model);
+
+  const candidates = [
+    preferred,
+    ...WAVESPEED_VIDEO_MODELS.map((m) => m.id).filter((id) => id !== preferred),
+  ];
+
+  const errors: string[] = [];
+
   if (process.env.WAVESPEED_API_KEY) {
-    try {
-      const { generateWaveSpeedVideo } = await import("./wavespeed");
-      // Map legacy Gemini model ids to WaveSpeed paths
-      let modelPath = input.model;
-      if (modelPath === "veo-3.1-fast-generate-preview" || modelPath === "gen4_turbo") {
-        modelPath = "kwaivgi/kling-v3.0-std/image-to-video";
-      } else if (modelPath === "veo-3.1-generate-preview" || modelPath === "gen4.5") {
-        modelPath = "google/veo3.1/image-to-video";
+    const { generateWaveSpeedVideo } = await import("./wavespeed.server");
+    for (const modelPath of candidates) {
+      try {
+        console.log(`Motion video trying: ${modelPath}`);
+        const r = await generateWaveSpeedVideo({
+          imageUrl: input.imageUrl,
+          remoteImageUrl: input.remoteImageUrl,
+          prompt: input.prompt,
+          modelPath,
+          durationSec: input.durationSec,
+          aspectRatio: input.aspectRatio || "9:16",
+        });
+        console.log(`Motion video OK via ${modelPath}`);
+        return r.localUrl;
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.warn(`Motion video failed on ${modelPath} (trying next):`, msg);
+        errors.push(`${modelPath}: ${msg}`);
       }
-      const r = await generateWaveSpeedVideo({
+    }
+  } else {
+    errors.push("WAVESPEED_API_KEY not configured");
+  }
+
+  // Last resort: Google Veo via Gemini API (different platform)
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      console.log("Motion video trying: Google Veo (Gemini API)");
+      return await generateGoogleVideo({
         imageUrl: input.imageUrl,
         remoteImageUrl: input.remoteImageUrl,
         prompt: input.prompt,
-        modelPath,
+        model:
+          preferred.includes("veo3.1-fast") || preferred.includes("fast")
+            ? "veo-3.1-fast-generate-preview"
+            : "veo-3.1-generate-preview",
         durationSec: input.durationSec,
-        aspectRatio: input.aspectRatio || "9:16",
       });
-      return r.localUrl;
     } catch (e) {
-      console.warn("WaveSpeed video failed:", (e as Error).message);
+      const msg = (e as Error).message;
+      console.warn("Google Veo direct failed:", msg);
+      errors.push(`Google Veo: ${msg}`);
     }
   }
-  return generateGoogleVideo(input);
+
+  throw new Error(
+    `All video generators failed. ${errors.slice(0, 6).join(" | ")}`,
+  );
 }
 
 /** Google Veo image-to-video via Gemini API. Returns a local upload URL. */
@@ -728,19 +978,23 @@ export async function generateRunwayVideo(input: {
   return generateMotionVideo(input);
 }
 
-export async function generateElevenLabsSpeech(text: string, voiceId: string): Promise<string> {
+export async function generateElevenLabsSpeech(
+  text: string,
+  voiceId: string,
+): Promise<{ publicUrl: string; durationSec: number }> {
   // Chunk long scripts (5–30 min) so TTS stays within API limits
   const chunks = splitTextForTts(text, 2200);
   if (chunks.length === 1) {
     const buf = await elevenLabsTtsBuffer(chunks[0], voiceId);
     const saved = await saveUploadBuffer(buf, "mp3");
-    return saved.publicUrl;
+    const durationSec = await probeDurationSec(saved.path);
+    return { publicUrl: saved.publicUrl, durationSec: durationSec || estimateSpeechSec(text) };
   }
 
   const { mkdtemp, rm, writeFile, readFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
   const { spawn } = await import("node:child_process");
-  const ffmpegPath = (await import("ffmpeg-static")).default as string;
+  const ffmpegPath = await resolveFfmpegPath();
   const dir = await mkdtemp(join(tmpdir(), "izent-tts-"));
   try {
     const parts: string[] = [];
@@ -772,10 +1026,36 @@ export async function generateElevenLabsSpeech(text: string, voiceId: string): P
       );
     });
     const saved = await saveUploadBuffer(await readFile(outPath), "mp3");
-    return saved.publicUrl;
+    const durationSec = await probeDurationSec(saved.path);
+    return { publicUrl: saved.publicUrl, durationSec: durationSec || estimateSpeechSec(text) };
   } finally {
     await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+function estimateSpeechSec(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  // ~145 wpm narration pace
+  return Math.max(5, (words / 145) * 60);
+}
+
+/** Probe media duration via ffmpeg stderr (no ffprobe dependency). */
+export async function probeDurationSec(filePath: string): Promise<number> {
+  const { spawn } = await import("node:child_process");
+  const ffmpegPath = await resolveFfmpegPath();
+  return new Promise((resolve) => {
+    const p = spawn(ffmpegPath, ["-i", filePath], { stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    p.stderr?.on("data", (d) => {
+      err += d.toString();
+    });
+    p.on("exit", () => {
+      const m = err.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (!m) return resolve(0);
+      resolve(Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]));
+    });
+    p.on("error", () => resolve(0));
+  });
 }
 
 function splitTextForTts(text: string, maxLen: number): string[] {
@@ -858,24 +1138,8 @@ async function elevenLabsMusicBuffer(prompt: string, lengthMs: number): Promise<
     }),
   });
   if (!res.ok) {
-    // Fallback: sound generation API (often available on more plans)
-    const sfx = await fetch("https://api.elevenlabs.io/v1/sound-generation", {
-      method: "POST",
-      headers: {
-        "xi-api-key": key,
-        "Content-Type": "application/json",
-        Accept: "audio/mpeg",
-      },
-      body: JSON.stringify({
-        text: prompt,
-        duration_seconds: Math.min(22, Math.max(3, lengthMs / 1000)),
-      }),
-    });
-    if (!sfx.ok) {
-      const err = await res.text();
-      throw new Error(`ElevenLabs music failed: ${err}`);
-    }
-    return Buffer.from(await sfx.arrayBuffer());
+    const err = await res.text();
+    throw new Error(`ElevenLabs music failed (no retry): ${err}`);
   }
   return Buffer.from(await res.arrayBuffer());
 }
@@ -897,7 +1161,7 @@ export async function previewMusicSample(prompt: string): Promise<string> {
 
 type SubtitleCue = { start: number; end: number; text: string };
 
-/** Split spoken script into timed on-screen subtitle cues. */
+/** Split spoken script into timed on-screen subtitle cues synced to audio duration. */
 export function splitScriptIntoSubtitleCues(
   script: string,
   durationSec: number,
@@ -905,7 +1169,8 @@ export function splitScriptIntoSubtitleCues(
   const cleaned = script.replace(/\s+/g, " ").trim();
   if (!cleaned) return [];
 
-  const wordsPerCue = 4;
+  // Shorter phrases track narration pacing better than long 4-word blocks
+  const wordsPerCue = 3;
   const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
   const phrases: string[] = [];
   for (const sentence of sentences.length ? sentences : [cleaned]) {
@@ -917,15 +1182,20 @@ export function splitScriptIntoSubtitleCues(
   if (!phrases.length) phrases.push(cleaned.slice(0, 48));
 
   const duration = Math.max(5, durationSec);
-  const leadIn = 0.12;
-  const usable = Math.max(1, duration - leadIn - 0.15);
-  const totalWeight = phrases.reduce((sum, p) => sum + Math.max(3, p.length), 0);
+  const leadIn = 0.05;
+  const usable = Math.max(1, duration - leadIn - 0.08);
+  // Weight by word count so denser phrases get more screen time (matches speech)
+  const totalWeight = phrases.reduce(
+    (sum, p) => sum + Math.max(1, p.split(/\s+/).length),
+    0,
+  );
 
   let t = leadIn;
   const cues: SubtitleCue[] = [];
   for (let i = 0; i < phrases.length; i++) {
-    const weight = Math.max(3, phrases[i].length) / totalWeight;
-    const len = Math.max(0.7, usable * weight);
+    const words = Math.max(1, phrases[i].split(/\s+/).length);
+    const weight = words / totalWeight;
+    const len = Math.max(0.35, usable * weight);
     const end = i === phrases.length - 1 ? duration : Math.min(duration, t + len);
     cues.push({ start: t, end, text: phrases[i] });
     t = end;
@@ -1022,7 +1292,8 @@ async function appendSubtitleFilters(
   height = 1280,
 ) {
   if (!cues.length) {
-    filters.push(`[${inputLabel}]copy[${outputLabel}]`);
+    // `copy` is not a valid libavfilter — passthrough with format
+    filters.push(`[${inputLabel}]format=yuv420p[${outputLabel}]`);
     return;
   }
   const assPath = await writeAssSubtitles(dir, cues, captionStyle, width, height);
@@ -1039,7 +1310,7 @@ async function runFfmpegAssemble(opts: {
   dir: string;
 }) {
   const { spawn } = await import("node:child_process");
-  const ffmpegPath = (await import("ffmpeg-static")).default as string;
+  const ffmpegPath = await resolveFfmpegPath();
 
   // Prefer inline filter_complex via spawn (avoids fluent-ffmpeg Windows quoting bugs)
   const filterComplex = opts.filters.join(";");
@@ -1060,10 +1331,26 @@ async function runFfmpegAssemble(opts: {
     String(opts.duration),
     "-c:v",
     "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "23",
     "-pix_fmt",
     "yuv420p",
+    "-profile:v",
+    "main",
+    "-level",
+    "4.0",
     "-c:a",
     "aac",
+    "-b:a",
+    "128k",
+    "-ac",
+    "2",
+    "-ar",
+    "44100",
+    "-movflags",
+    "+faststart",
     "-shortest",
     opts.outPath,
   );
@@ -1093,17 +1380,22 @@ export async function assembleReel(input: {
   sceneUrls?: string[];
   visualUrl?: string;
   isVideo?: boolean;
-  voiceUrl: string;
+  /** Optional — omit for UGC/commercial (no ElevenLabs narration) */
+  voiceUrl?: string | null;
+  /** Measured TTS length — captions + reel length sync to this when set */
+  voiceDurationSec?: number | null;
   musicUrl?: string | null;
-  /** Spoken narration — burned in as timed subtitles */
+  /** Spoken narration — burned in as timed subtitles when burnSubtitles is true */
   script: string;
   captionStyle: string;
+  /** Default: burn when voice is present */
+  burnSubtitles?: boolean;
   glitch?: boolean;
   targetDurationSec: number;
   /** short 9:16 or long 16:9 */
   aspectRatio?: "9:16" | "16:9";
 }): Promise<string> {
-  const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { mkdtemp, rm, writeFile, readFile } = await import("node:fs/promises");
   const { tmpdir } = await import("node:os");
 
   const dir = await mkdtemp(join(tmpdir(), "izent-series-"));
@@ -1113,14 +1405,37 @@ export async function assembleReel(input: {
     const outPath = join(dir, "out.mp4");
     // Short up to 5min; long up to 30min
     const maxDur = input.aspectRatio === "16:9" ? 1800 : 300;
-    const duration = Math.max(5, Math.min(maxDur, input.targetDurationSec));
-    const cues = splitScriptIntoSubtitleCues(input.script, duration);
+    const hasVoice = !!input.voiceUrl;
+    const hasMusic = !!input.musicUrl;
+
+    // Prefer real voice length so captions match narration (not target duration)
+    let duration = Math.max(5, Math.min(maxDur, input.targetDurationSec));
+    if (hasVoice && input.voiceDurationSec && input.voiceDurationSec > 1) {
+      duration = Math.max(5, Math.min(maxDur, input.voiceDurationSec + 0.25));
+    }
+
+    const burnSubtitles =
+      input.burnSubtitles ?? (hasVoice && !!input.script?.trim());
+    let cues = burnSubtitles
+      ? splitScriptIntoSubtitleCues(input.script, duration)
+      : [];
     const width = input.aspectRatio === "16:9" ? 1280 : 720;
     const height = input.aspectRatio === "16:9" ? 720 : 1280;
 
-    await writeFile(voicePath, await fetchAsBuffer(input.voiceUrl));
-    if (input.musicUrl) {
-      await writeFile(musicPath, await fetchAsBuffer(input.musicUrl));
+    if (hasVoice) {
+      await writeFile(voicePath, await fetchAsBuffer(input.voiceUrl!));
+      if (!input.voiceDurationSec || input.voiceDurationSec < 1) {
+        const probed = await probeDurationSec(voicePath);
+        if (probed > 1) {
+          duration = Math.max(5, Math.min(maxDur, probed + 0.25));
+          if (burnSubtitles) {
+            cues = splitScriptIntoSubtitleCues(input.script, duration);
+          }
+        }
+      }
+    }
+    if (hasMusic) {
+      await writeFile(musicPath, await fetchAsBuffer(input.musicUrl!));
     }
 
     const glitch = input.glitch
@@ -1170,17 +1485,36 @@ export async function assembleReel(input: {
       height,
     );
 
-    const voiceIdx = n;
-    const musicIdx = n + 1;
-    if (input.musicUrl) {
+    const audioInputs: Array<{ path: string; inputOptions?: string[] }> = [];
+    if (hasVoice && hasMusic) {
+      const voiceIdx = n;
+      const musicIdx = n + 1;
+      audioInputs.push({ path: voicePath }, { path: musicPath });
       filters.push(
         `[${voiceIdx}:a]volume=1.0[voice]`,
         `[${musicIdx}:a]aloop=loop=-1:size=2e+09,atrim=0:${duration},volume=0.22[music]`,
         `[voice][music]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
       );
-    } else {
+    } else if (hasVoice) {
+      const voiceIdx = n;
+      audioInputs.push({ path: voicePath });
       filters.push(
-        `[${voiceIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=1.0[aout]`,
+        `[${voiceIdx}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,aresample=44100,volume=1.0[aout]`,
+      );
+    } else if (hasMusic) {
+      const musicIdx = n;
+      audioInputs.push({ path: musicPath });
+      filters.push(
+        `[${musicIdx}:a]aloop=loop=-1:size=2e+09,atrim=0:${duration},aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,volume=0.35[aout]`,
+      );
+    } else {
+      // Silent track for UGC/commercial (normal video, no ElevenLabs)
+      audioInputs.push({
+        path: "anullsrc=channel_layout=stereo:sample_rate=44100",
+        inputOptions: ["-f", "lavfi", "-t", String(duration)],
+      });
+      filters.push(
+        `[${n}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[aout]`,
       );
     }
 
@@ -1191,8 +1525,7 @@ export async function assembleReel(input: {
             ? { path: p, inputOptions: ["-stream_loop", "-1", "-t", String(per)] }
             : { path: p, inputOptions: ["-loop", "1", "-t", String(per)] },
         ),
-        { path: voicePath },
-        ...(input.musicUrl ? [{ path: musicPath }] : []),
+        ...audioInputs,
       ],
       filters,
       outPath,
@@ -1201,6 +1534,15 @@ export async function assembleReel(input: {
     });
 
     const buf = await readFile(outPath);
+    if (!buf.length || buf.length < 1000) {
+      throw new Error(`Assembled video is empty/corrupt (${buf.length} bytes)`);
+    }
+    // Quick sanity: MP4 should start with ftyp box somehow in first bytes after possible junk
+    const head = buf.subarray(0, 12).toString("ascii");
+    if (!head.includes("ftyp") && buf[4] !== 0x66) {
+      // Still allow — some writers put size first; verify minimum size only
+      console.warn("MP4 header check unusual:", [...buf.subarray(0, 8)]);
+    }
     const saved = await saveUploadBuffer(buf, "mp4");
     return saved.publicUrl;
   } finally {
@@ -1209,9 +1551,11 @@ export async function assembleReel(input: {
 }
 
 async function fetchAsBuffer(url: string): Promise<Buffer> {
+  const { readFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
   if (url.startsWith("/api/uploads/")) {
     const rel = url.replace("/api/uploads/", "");
-    return readFile(join(process.cwd(), "uploads", rel));
+    return readFile(join(uploadsRoot(), rel));
   }
   if (url.startsWith("/series/") || url.startsWith("/public/")) {
     const rel = url.replace(/^\/public\//, "").replace(/^\//, "");

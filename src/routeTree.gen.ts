@@ -17,7 +17,11 @@ import { Route as ComposerRouteImport } from './routes/composer'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SeriesIndexRouteImport } from './routes/series.index'
 import { Route as SeriesVideosRouteImport } from './routes/series.videos'
+import { Route as SeriesSettingsRouteImport } from './routes/series.settings'
 import { Route as SeriesCreateRouteImport } from './routes/series.create'
+import { Route as StudioIndexRouteImport } from './routes/studio.index'
+import { Route as StudioGenerateRouteImport } from './routes/studio.generate'
+import { Route as StudioAssetsRouteImport } from './routes/studio.assets'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -59,9 +63,29 @@ const SeriesVideosRoute = SeriesVideosRouteImport.update({
   path: '/series/videos',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SeriesSettingsRoute = SeriesSettingsRouteImport.update({
+  id: '/series/settings',
+  path: '/series/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SeriesCreateRoute = SeriesCreateRouteImport.update({
   id: '/series/create',
   path: '/series/create',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioIndexRoute = StudioIndexRouteImport.update({
+  id: '/studio/',
+  path: '/studio/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioGenerateRoute = StudioGenerateRouteImport.update({
+  id: '/studio/generate',
+  path: '/studio/generate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StudioAssetsRoute = StudioAssetsRouteImport.update({
+  id: '/studio/assets',
+  path: '/studio/assets',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -73,8 +97,12 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/series/create': typeof SeriesCreateRoute
+  '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series/': typeof SeriesIndexRoute
+  '/studio/generate': typeof StudioGenerateRoute
+  '/studio/assets': typeof StudioAssetsRoute
+  '/studio/': typeof StudioIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -84,8 +112,12 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/series/create': typeof SeriesCreateRoute
+  '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series': typeof SeriesIndexRoute
+  '/studio/generate': typeof StudioGenerateRoute
+  '/studio/assets': typeof StudioAssetsRoute
+  '/studio': typeof StudioIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -96,8 +128,12 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/settings': typeof SettingsRoute
   '/series/create': typeof SeriesCreateRoute
+  '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series/': typeof SeriesIndexRoute
+  '/studio/generate': typeof StudioGenerateRoute
+  '/studio/assets': typeof StudioAssetsRoute
+  '/studio/': typeof StudioIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -109,8 +145,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/series/create'
+    | '/series/settings'
     | '/series/videos'
     | '/series/'
+    | '/studio/generate'
+    | '/studio/assets'
+    | '/studio/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -120,8 +160,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/series/create'
+    | '/series/settings'
     | '/series/videos'
     | '/series'
+    | '/studio/generate'
+    | '/studio/assets'
+    | '/studio'
   id:
     | '__root__'
     | '/'
@@ -131,8 +175,12 @@ export interface FileRouteTypes {
     | '/login'
     | '/settings'
     | '/series/create'
+    | '/series/settings'
     | '/series/videos'
     | '/series/'
+    | '/studio/generate'
+    | '/studio/assets'
+    | '/studio/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -143,8 +191,12 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   SettingsRoute: typeof SettingsRoute
   SeriesCreateRoute: typeof SeriesCreateRoute
+  SeriesSettingsRoute: typeof SeriesSettingsRoute
   SeriesVideosRoute: typeof SeriesVideosRoute
   SeriesIndexRoute: typeof SeriesIndexRoute
+  StudioGenerateRoute: typeof StudioGenerateRoute
+  StudioAssetsRoute: typeof StudioAssetsRoute
+  StudioIndexRoute: typeof StudioIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -205,11 +257,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SeriesVideosRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/series/settings': {
+      id: '/series/settings'
+      path: '/series/settings'
+      fullPath: '/series/settings'
+      preLoaderRoute: typeof SeriesSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/series/create': {
       id: '/series/create'
       path: '/series/create'
       fullPath: '/series/create'
       preLoaderRoute: typeof SeriesCreateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/': {
+      id: '/studio/'
+      path: '/studio'
+      fullPath: '/studio/'
+      preLoaderRoute: typeof StudioIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/generate': {
+      id: '/studio/generate'
+      path: '/studio/generate'
+      fullPath: '/studio/generate'
+      preLoaderRoute: typeof StudioGenerateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/studio/assets': {
+      id: '/studio/assets'
+      path: '/studio/assets'
+      fullPath: '/studio/assets'
+      preLoaderRoute: typeof StudioAssetsRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -223,8 +303,12 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   SettingsRoute: SettingsRoute,
   SeriesCreateRoute: SeriesCreateRoute,
+  SeriesSettingsRoute: SeriesSettingsRoute,
   SeriesVideosRoute: SeriesVideosRoute,
   SeriesIndexRoute: SeriesIndexRoute,
+  StudioGenerateRoute: StudioGenerateRoute,
+  StudioAssetsRoute: StudioAssetsRoute,
+  StudioIndexRoute: StudioIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
