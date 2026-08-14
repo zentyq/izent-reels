@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   CalendarClock,
   CheckCircle2,
+  Download,
   Film,
   ImageIcon,
   Loader2,
@@ -23,6 +24,7 @@ import {
   listSeriesVideos,
   publishSeriesVideoNow,
 } from "@/lib/series.functions";
+import { downloadMediaToDevice } from "@/lib/download-media";
 import {
   formatScheduleLabels,
   londonDatetimeLocalToUtc,
@@ -46,6 +48,7 @@ function SeriesVideosPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
   const [postBusyId, setPostBusyId] = useState<string | null>(null);
+  const [downloadBusyId, setDownloadBusyId] = useState<string | null>(null);
   const [scheduleFor, setScheduleFor] = useState<string | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [videos, setVideos] = useState<any[]>([]);
@@ -138,6 +141,35 @@ function SeriesVideosPage() {
       load();
     } finally {
       setPostBusyId(null);
+    }
+  }
+
+  async function onDownload(video: {
+    id: string;
+    mediaUrl?: string | null;
+    title?: string | null;
+    episodeNumber?: number | null;
+  }) {
+    if (!video.mediaUrl) return toast.error("No video file yet");
+    setDownloadBusyId(video.id);
+    try {
+      const base =
+        (video.title || `series-ep-${video.episodeNumber || "video"}`)
+          .slice(0, 80)
+          .trim() || "series-video";
+      const filename = base.toLowerCase().endsWith(".mp4") ? base : `${base}.mp4`;
+      const mode = await downloadMediaToDevice(video.mediaUrl, filename);
+      if (mode === "shared") {
+        toast.success("Use Share → Save Video / Save to Files");
+      } else if (mode === "downloaded") {
+        toast.success("Download started");
+      } else {
+        toast.message("Opened download link");
+      }
+    } catch (e) {
+      toast.error((e as Error).message || "Download failed");
+    } finally {
+      setDownloadBusyId(null);
     }
   }
 
@@ -344,11 +376,20 @@ function SeriesVideosPage() {
                         preload="metadata"
                         className="w-full max-w-[220px] rounded-lg bg-black"
                       />
-                      <a href={v.mediaUrl} target="_blank" rel="noreferrer">
-                        <Button size="sm" variant="outline" className="w-full">
-                          Open video
-                        </Button>
-                      </a>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        disabled={downloadBusyId === v.id}
+                        onClick={() => onDownload(v)}
+                      >
+                        {downloadBusyId === v.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                        ) : (
+                          <Download className="h-3.5 w-3.5 mr-1.5" />
+                        )}
+                        Download
+                      </Button>
                     </div>
                   )}
                 </div>

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { STUDIO_BRAND } from "@/lib/studio/constants";
 import { deleteStudioJob, listStudioJobs } from "@/lib/studio.functions";
+import { downloadMediaToDevice } from "@/lib/download-media";
 
 export const Route = createFileRoute("/studio/assets")({
   head: () => ({
@@ -123,14 +124,26 @@ function StudioAssetsPage() {
                   )}
                   <div className="mt-auto flex gap-2">
                     {j.mediaUrl && j.status === "ready" && (
-                      <a
-                        href={j.mediaUrl}
-                        download
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const name = `${(j.title || "studio-video").slice(0, 80)}.mp4`;
+                            const mode = await downloadMediaToDevice(j.mediaUrl, name);
+                            if (mode === "shared") {
+                              toast.success("Use Share → Save Video / Save to Files");
+                            } else {
+                              toast.success("Download started");
+                            }
+                          } catch (e) {
+                            toast.error((e as Error).message || "Download failed");
+                          }
+                        }}
                         className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg gradient-bg px-3 py-2 text-xs font-semibold text-primary-foreground"
                       >
                         <Download className="h-3.5 w-3.5" />
                         Download
-                      </a>
+                      </button>
                     )}
                     <Button
                       size="sm"

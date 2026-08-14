@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { downloadMediaToDevice } from "@/lib/download-media";
 import {
   STUDIO_ASPECTS,
   STUDIO_BRAND,
@@ -299,14 +300,26 @@ function StudioGeneratePage() {
                     playsInline
                     className="w-full rounded-2xl border border-border/50 bg-black/5 max-h-[60vh]"
                   />
-                  <a
-                    href={job.mediaUrl}
-                    download
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        const name = `${(job.title || "studio-video").slice(0, 80)}.mp4`;
+                        const mode = await downloadMediaToDevice(job.mediaUrl!, name);
+                        if (mode === "shared") {
+                          toast.success("Use Share → Save Video / Save to Files");
+                        } else {
+                          toast.success("Download started");
+                        }
+                      } catch (e) {
+                        toast.error((e as Error).message || "Download failed");
+                      }
+                    }}
                     className="inline-flex items-center gap-2 rounded-xl gradient-bg px-4 py-2.5 text-sm font-semibold text-primary-foreground"
                   >
                     <Download className="h-4 w-4" />
                     Download MP4
-                  </a>
+                  </button>
                 </div>
               ) : job.status === "failed" ? (
                 <div className="rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">

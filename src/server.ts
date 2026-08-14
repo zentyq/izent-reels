@@ -102,8 +102,18 @@ export default {
             "cache-control": "public, max-age=86400",
           };
 
+          const wantsDownload = url.searchParams.get("download") === "1";
+          if (wantsDownload) {
+            const base =
+              rel.split("/").pop()?.replace(/[^\w.\-() ]+/g, "_") ||
+              (ext === "mp4" ? "video.mp4" : `file.${ext || "bin"}`);
+            baseHeaders["content-disposition"] =
+              `attachment; filename="${base}"; filename*=UTF-8''${encodeURIComponent(base)}`;
+          }
+
           const range = request.headers.get("range");
-          if (range) {
+          // Range requests are for <video> scrubbing — skip attachment disposition there
+          if (range && !wantsDownload) {
             const m = /^bytes=(\d*)-(\d*)$/i.exec(range.trim());
             if (!m) {
               return new Response("Invalid Range", {
