@@ -65,6 +65,8 @@ const createSeriesSchema = z.object({
   /** Optional title for first video when importing from YouTube */
   lockedTitle: z.string().max(120).optional().nullable(),
   voiceId: z.string().optional().nullable(),
+  /** User-uploaded narration file URL (/api/uploads/...) */
+  customVoiceUrl: z.string().max(2000).optional().nullable(),
   skipVoice: z.boolean().default(false),
   musicIds: z.array(z.string()).default([]),
   customMusicUrls: z.array(z.string()).default([]),
@@ -342,10 +344,16 @@ export const createSeries = createServerFn({ method: "POST" })
       const userId = await getUserId();
       const isProductMode =
         data.contentMode === "ugc" || data.contentMode === "commercial";
-      const skipVoice = data.skipVoice || isProductMode || !data.voiceId || data.voiceId === "none";
+      const customVoiceUrl = data.customVoiceUrl?.trim() || null;
+      const skipVoice =
+        (!!customVoiceUrl
+          ? false
+          : data.skipVoice || isProductMode || !data.voiceId || data.voiceId === "none");
       const skipMusic =
-        data.skipMusic || isProductMode || (data.musicIds.length === 0 && !data.customMusicUrls.length);
-      const skipCaptions = data.skipCaptions || isProductMode || data.captionStyle === "none";
+        data.skipMusic ||
+        isProductMode ||
+        (data.musicIds.length === 0 && !data.customMusicUrls.length);
+      const skipCaptions = data.skipCaptions || data.captionStyle === "none";
       const visualMode = isProductMode
         ? "full_video"
         : data.visualMode || (data.animatedHook ? "animated_hook" : "images");
@@ -427,6 +435,7 @@ export const createSeries = createServerFn({ method: "POST" })
           lockedScript: data.lockedScript?.trim() || null,
           sourceYoutubeUrl: data.sourceYoutubeUrl?.trim() || null,
           voiceId: skipVoice ? "none" : data.voiceId || "JBFqnCBsd6RMkjVDRZzb",
+          customVoiceUrl,
           skipVoice,
           musicIds: skipMusic ? [] : data.musicIds,
           customMusicUrls: skipMusic ? [] : data.customMusicUrls,
@@ -663,6 +672,55 @@ export const uploadSeriesReferenceImage = createServerFn({ method: "POST" })
     }
   });
 
+/** Upload personal voice narration or background music/audio for a series. */
+export const uploadSeriesAudio = createServerFn({ method: "POST" })
+  .inputValidator(
+    z.object({
+      base64: z.string().min(32),
+      contentType: z.string().default("audio/mpeg"),
+      kind: z.enum(["voice", "music"]).default("music"),
+      filename: z.string().max(200).optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    try {
+      await getUserId();
+      const raw = data.base64.replace(/^data:[^;]+;base64,/, "");
+      const buf = Buffer.from(raw, "base64");
+      if (!buf.length) return { ok: false as const, error: "Empty audio file" };
+      if (buf.length > 20 * 1024 * 1024) {
+        return { ok: false as const, error: "Audio must be under 20MB" };
+      }
+      const ct = (data.contentType || "").toLowerCase();
+      const name = (data.filename || "").toLowerCase();
+      let ext = "mp3";
+      if (ct.includes("wav") || name.endsWith(".wav")) ext = "wav";
+      else if (ct.includes("mp4") || ct.includes("m4a") || name.endsWith(".m4a")) ext = "m4a";
+      else if (ct.includes("ogg") || name.endsWith(".ogg")) ext = "ogg";
+      else if (ct.includes("aac") || name.endsWith(".aac")) ext = "aac";
+      else if (ct.includes("mpeg") || ct.includes("mp3") || name.endsWith(".mp3")) ext = "mp3";
+
+      const subdir = data.kind === "voice" ? "series-voice" : "series-music";
+      const { saveUploadBuffer, probeDurationSec } = await seriesProviders();
+      const saved = await saveUploadBuffer(buf, ext, subdir);
+      let durationSec: number | null = null;
+      try {
+        const probed = await probeDurationSec(saved.path);
+        if (probed > 0.5) durationSec = probed;
+      } catch {
+        // optional
+      }
+      return {
+        ok: true as const,
+        url: saved.publicUrl,
+        durationSec,
+        contentType: ct || `audio/${ext}`,
+      };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
+    }
+  });
+
 /** Process due generations + posts. Call from cron or UI "Process queue". */
 export const processSeriesQueue = createServerFn({ method: "POST" }).handler(async () => {
   try {
@@ -833,14 +891,20 @@ async function runVideoGeneration(videoId: string) {
 
     const isProductMode =
       series.contentMode === "ugc" || series.contentMode === "commercial";
+    const customVoiceUrl =
+      typeof (series as { customVoiceUrl?: string | null }).customVoiceUrl === "string"
+        ? (series as { customVoiceUrl?: string | null }).customVoiceUrl!.trim()
+        : "";
     const skipVoice =
-      series.skipVoice ||
-      isProductMode ||
-      !series.voiceId ||
-      series.voiceId === "none";
+      !!customVoiceUrl
+        ? false
+        : series.skipVoice ||
+          isProductMode ||
+          !series.voiceId ||
+          series.voiceId === "none";
     const skipMusic = series.skipMusic || isProductMode;
     const skipCaptions =
-      series.skipCaptions || isProductMode || series.captionStyle === "none";
+      series.skipCaptions || series.captionStyle === "none";
 
     // Internal sequence only — stories stay standalone (no episode continuity)
     const priorCount = await prisma.seriesVideo.count({
@@ -925,15 +989,34 @@ async function runVideoGeneration(videoId: string) {
     let voiceUrl: string | null = null;
     let voiceDurationSec: number | null = null;
     let musicUrl: string | null = null;
-    if (!skipVoice) {
+    if (customVoiceUrl) {
+      voiceUrl = customVoiceUrl;
+      try {
+        const { probeDurationSec } = await seriesProviders();
+        const { join } = await import("node:path");
+        if (customVoiceUrl.startsWith("/api/uploads/")) {
+          const rel = customVoiceUrl.replace("/api/uploads/", "");
+          const filePath = join(
+            process.env.UPLOADS_DIR || join(process.cwd(), "uploads"),
+            rel,
+          );
+          const probed = await probeDurationSec(filePath);
+          if (probed > 1) voiceDurationSec = probed;
+        }
+      } catch (e) {
+        console.warn("Custom voice duration probe skipped:", (e as Error).message);
+      }
+    } else if (!skipVoice) {
       // One ElevenLabs TTS attempt — failure stops the whole job
       const speech = await generateElevenLabsSpeech(content.script, series.voiceId);
       voiceUrl = speech.publicUrl;
       voiceDurationSec = speech.durationSec;
     }
     if (!skipMusic) {
-      // One music attempt — on failure, continue without music (do not call another ElevenLabs path)
-      if (series.musicIds.length > 0) {
+      // Prefer user-uploaded / pasted music first, then AI presets
+      if (series.customMusicUrls?.length) {
+        musicUrl = series.customMusicUrls[0];
+      } else if (series.musicIds.length > 0) {
         const musicId = series.musicIds[Math.floor(Math.random() * series.musicIds.length)];
         const preset = MUSIC_PRESETS.find((m) => m.id === musicId);
         if (preset) {
@@ -942,8 +1025,6 @@ async function runVideoGeneration(videoId: string) {
             Math.min(Math.max(voiceDurationSec || dur, 8), 60) * 1000,
           );
         }
-      } else if (series.customMusicUrls[0]) {
-        musicUrl = series.customMusicUrls[0];
       }
     }
 
@@ -1000,7 +1081,7 @@ async function runVideoGeneration(videoId: string) {
       musicUrl,
       script: content.script,
       captionStyle: series.captionStyle,
-      burnSubtitles: !skipCaptions && !skipVoice,
+      burnSubtitles: !skipCaptions,
       glitch: series.glitchEffect,
       targetDurationSec: assembleDur,
       aspectRatio: aspect,
@@ -1492,8 +1573,10 @@ export const updateSeriesSettings = createServerFn({ method: "POST" })
       seriesId: z.string(),
       name: z.string().min(1).max(120).optional(),
       voiceId: z.string().optional().nullable(),
+      customVoiceUrl: z.string().max(2000).optional().nullable(),
       skipVoice: z.boolean().optional(),
       musicIds: z.array(z.string()).optional(),
+      customMusicUrls: z.array(z.string()).optional(),
       skipMusic: z.boolean().optional(),
       artStyle: z.string().optional(),
       captionStyle: z.string().optional(),
@@ -1544,8 +1627,20 @@ export const updateSeriesSettings = createServerFn({ method: "POST" })
           ...(postIntervalHours != null
             ? { postIntervalHours: clampIntervalHours(postIntervalHours) }
             : {}),
-          voiceId:
-            rest.skipVoice || rest.voiceId === "none"
+          customVoiceUrl:
+            rest.customVoiceUrl !== undefined
+              ? rest.customVoiceUrl?.trim() || null
+              : existing.customVoiceUrl,
+          skipVoice: !!(
+            rest.customVoiceUrl?.trim()
+              ? false
+              : rest.skipVoice !== undefined
+                ? rest.skipVoice
+                : existing.skipVoice
+          ),
+          voiceId: rest.customVoiceUrl?.trim()
+            ? rest.voiceId || existing.voiceId || "custom"
+            : rest.skipVoice || rest.voiceId === "none"
               ? "none"
               : rest.voiceId ?? existing.voiceId,
           referenceImageUrl: rest.referenceImageUrls?.[0] ?? existing.referenceImageUrl,

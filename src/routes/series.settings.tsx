@@ -2,13 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, Save, Settings2 } from "lucide-react";
+import { Loader2, RefreshCw, Save, Settings2, Upload } from "lucide-react";
 
 import { SeriesShell } from "@/components/series/SeriesShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -30,6 +31,7 @@ import { SERIES_TIMEZONE } from "@/lib/series/timezone";
 import {
   getSeriesSettings,
   updateSeriesSettings,
+  uploadSeriesAudio,
 } from "@/lib/series.functions";
 import {
   createProject,
@@ -48,6 +50,7 @@ export const Route = createFileRoute("/series/settings")({
 function SeriesSettingsPage() {
   const fnGet = useServerFn(getSeriesSettings);
   const fnUpdate = useServerFn(updateSeriesSettings);
+  const fnUploadAudio = useServerFn(uploadSeriesAudio);
   const fnListProjects = useServerFn(listProjects);
   const fnCreateProject = useServerFn(createProject);
   const fnListAccounts = useServerFn(listAccounts);
@@ -62,6 +65,7 @@ function SeriesSettingsPage() {
   const [accountsLoading, setAccountsLoading] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
   const [linkingProject, setLinkingProject] = useState(false);
+  const [audioUploading, setAudioUploading] = useState<"voice" | "music" | null>(null);
 
   const selected = useMemo(
     () => allSeries.find((s) => s.id === seriesId) || null,
@@ -196,9 +200,11 @@ function SeriesSettingsPage() {
         data: {
           seriesId: form.id,
           name: form.name,
-          voiceId: form.skipVoice ? "none" : form.voiceId,
-          skipVoice: !!form.skipVoice,
+          voiceId: form.customVoiceUrl || !form.skipVoice ? form.voiceId : "none",
+          customVoiceUrl: form.skipVoice ? null : form.customVoiceUrl || null,
+          skipVoice: !!form.skipVoice && !form.customVoiceUrl,
           musicIds: form.skipMusic ? [] : form.musicIds || [],
+          customMusicUrls: form.skipMusic ? [] : form.customMusicUrls || [],
           skipMusic: !!form.skipMusic,
           artStyle: form.artStyle === "auto" || form.skipArtStyle ? "auto" : form.artStyle,
           captionStyle: form.skipCaptions ? "none" : form.captionStyle,
@@ -403,23 +409,94 @@ function SeriesSettingsPage() {
             <div className="flex items-center justify-between">
               <span className="text-sm">Skip voice (normal / silent video)</span>
               <Switch
-                checked={!!form.skipVoice}
-                onCheckedChange={(v) => patch({ skipVoice: v })}
+                checked={!!form.skipVoice && !form.customVoiceUrl}
+                onCheckedChange={(v) =>
+                  patch({
+                    skipVoice: v,
+                    ...(v ? { customVoiceUrl: null } : {}),
+                  })
+                }
               />
             </div>
-            {!form.skipVoice && (
-              <Select value={form.voiceId || VOICE_PRESETS[0].id} onValueChange={(v) => patch({ voiceId: v })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Voice" />
-                </SelectTrigger>
-                <SelectContent>
-                  {VOICE_PRESETS.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>
-                      {v.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {!(form.skipVoice && !form.customVoiceUrl) && (
+              <>
+                <Select
+                  value={form.customVoiceUrl ? "custom" : form.voiceId || VOICE_PRESETS[0].id}
+                  onValueChange={(v) => {
+                    if (v === "custom") return;
+                    patch({ voiceId: v, customVoiceUrl: null, skipVoice: false });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Voice" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VOICE_PRESETS.map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.label}
+                      </SelectItem>
+                    ))}
+                    {form.customVoiceUrl && (
+                      <SelectItem value="custom">Uploaded voice</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,.mp3,.wav,.m4a"
+                    className="hidden"
+                    disabled={audioUploading === "voice"}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      if (file.size > 20 * 1024 * 1024) {
+                        return toast.error("Audio must be under 20MB");
+                      }
+                      setAudioUploading("voice");
+                      try {
+                        const dataUrl = await new Promise<string>((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(String(reader.result || ""));
+                          reader.onerror = () => reject(new Error("Read failed"));
+                          reader.readAsDataURL(file);
+                        });
+                        const res = await fnUploadAudio({
+                          data: {
+                            base64: dataUrl,
+                            contentType: file.type || "audio/mpeg",
+                            kind: "voice",
+                            filename: file.name,
+                          },
+                        });
+                        if (!res.ok || !res.url) throw new Error(res.error || "Upload failed");
+                        patch({ customVoiceUrl: res.url, skipVoice: false });
+                        toast.success("Custom voice uploaded");
+                      } catch (err) {
+                        toast.error((err as Error).message);
+                      } finally {
+                        setAudioUploading(null);
+                      }
+                    }}
+                  />
+                  <Button type="button" size="sm" variant="outline" asChild>
+                    <span>
+                      {audioUploading === "voice" ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Upload my voice
+                    </span>
+                  </Button>
+                </label>
+                {form.customVoiceUrl && (
+                  <p className="text-xs text-muted-foreground truncate">
+                    Using uploaded voice: {form.customVoiceUrl}
+                  </p>
+                )}
+              </>
             )}
             <div className="flex items-center justify-between">
               <span className="text-sm">Skip music</span>
@@ -429,28 +506,104 @@ function SeriesSettingsPage() {
               />
             </div>
             {!form.skipMusic && (
-              <div className="flex flex-wrap gap-2">
-                {MUSIC_PRESETS.map((m) => {
-                  const on = (form.musicIds || []).includes(m.id);
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => {
-                        const cur: string[] = form.musicIds || [];
-                        patch({
-                          musicIds: on ? cur.filter((x) => x !== m.id) : [...cur, m.id],
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {MUSIC_PRESETS.map((m) => {
+                    const selected = (form.musicIds || []).includes(m.id);
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => {
+                          const cur: string[] = form.musicIds || [];
+                          patch({
+                            musicIds: selected
+                              ? cur.filter((x) => x !== m.id)
+                              : [...cur, m.id],
+                          });
+                        }}
+                        className={`rounded-lg border px-3 py-1.5 text-xs ${
+                          selected
+                            ? "border-primary bg-primary/10"
+                            : "border-border/50"
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="file"
+                    accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,.mp3,.wav,.m4a"
+                    className="hidden"
+                    disabled={audioUploading === "music"}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      if (file.size > 20 * 1024 * 1024) {
+                        return toast.error("Audio must be under 20MB");
+                      }
+                      setAudioUploading("music");
+                      try {
+                        const dataUrl = await new Promise<string>((resolve, reject) => {
+                          const reader = new FileReader();
+                          reader.onload = () => resolve(String(reader.result || ""));
+                          reader.onerror = () => reject(new Error("Read failed"));
+                          reader.readAsDataURL(file);
                         });
-                      }}
-                      className={`text-xs rounded-full border px-3 py-1 ${
-                        on ? "border-primary bg-primary/10" : "border-border/50"
-                      }`}
-                    >
-                      {m.label}
-                    </button>
-                  );
-                })}
-              </div>
+                        const res = await fnUploadAudio({
+                          data: {
+                            base64: dataUrl,
+                            contentType: file.type || "audio/mpeg",
+                            kind: "music",
+                            filename: file.name,
+                          },
+                        });
+                        if (!res.ok || !res.url) throw new Error(res.error || "Upload failed");
+                        const cur: string[] = form.customMusicUrls || [];
+                        patch({
+                          customMusicUrls: [res.url, ...cur].slice(0, 5),
+                          skipMusic: false,
+                        });
+                        toast.success("Music uploaded");
+                      } catch (err) {
+                        toast.error((err as Error).message);
+                      } finally {
+                        setAudioUploading(null);
+                      }
+                    }}
+                  />
+                  <Button type="button" size="sm" variant="outline" asChild>
+                    <span>
+                      {audioUploading === "music" ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Upload music / audio
+                    </span>
+                  </Button>
+                </label>
+                <div>
+                  <Label className="text-xs">Custom music URLs</Label>
+                  <Textarea
+                    className="mt-1.5 min-h-[72px] text-sm"
+                    placeholder="One audio URL per line"
+                    value={(form.customMusicUrls || []).join("\n")}
+                    onChange={(e) =>
+                      patch({
+                        customMusicUrls: e.target.value
+                          .split("\n")
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      })
+                    }
+                  />
+                </div>
+              </>
             )}
           </section>
 

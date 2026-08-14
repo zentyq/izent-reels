@@ -90,11 +90,19 @@ export default {
               ? "video/mp4"
               : ext === "mp3"
                 ? "audio/mpeg"
-                : ext === "jpg" || ext === "jpeg"
-                  ? "image/jpeg"
-                  : ext === "webp"
-                    ? "image/webp"
-                    : "image/png";
+                : ext === "wav"
+                  ? "audio/wav"
+                  : ext === "m4a"
+                    ? "audio/mp4"
+                    : ext === "ogg"
+                      ? "audio/ogg"
+                      : ext === "aac"
+                        ? "audio/aac"
+                        : ext === "jpg" || ext === "jpeg"
+                          ? "image/jpeg"
+                          : ext === "webp"
+                            ? "image/webp"
+                            : "image/png";
 
           const baseHeaders: Record<string, string> = {
             "content-type": type,

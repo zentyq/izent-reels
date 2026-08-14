@@ -81,6 +81,8 @@ model Series {
   lockedScript    String?
   sourceYoutubeUrl String?
   voiceId         String   @default("JBFqnCBsd6RMkjVDRZzb")
+  /// User-uploaded narration audio (mp3/wav/m4a) — used instead of ElevenLabs when set
+  customVoiceUrl  String?
   /// Skip ElevenLabs narration (UGC / commercial / silent "normal" video)
   skipVoice       Boolean  @default(false)
   musicIds        String[] @default([])

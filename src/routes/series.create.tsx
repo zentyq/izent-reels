@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   Rocket,
+  Upload,
   Youtube,
 } from "lucide-react";
 
@@ -51,6 +52,7 @@ import {
   previewSeriesMusic,
   previewSeriesVoice,
   reviewImportedYouTubeScript,
+  uploadSeriesAudio,
   uploadSeriesReferenceImage,
 } from "@/lib/series.functions";
 import {
@@ -86,6 +88,7 @@ function CreateSeriesWizard() {
   const navigate = useNavigate();
   const fnCreate = useServerFn(createSeries);
   const fnUploadRef = useServerFn(uploadSeriesReferenceImage);
+  const fnUploadAudio = useServerFn(uploadSeriesAudio);
   const fnListProjects = useServerFn(listProjects);
   const fnCreateProject = useServerFn(createProject);
   const fnListAccounts = useServerFn(listAccounts);
@@ -129,12 +132,18 @@ function CreateSeriesWizard() {
   const [ytSourceTitle, setYtSourceTitle] = useState("");
 
   // Step 2
+  const [voiceTab, setVoiceTab] = useState<"preset" | "upload">("preset");
   const [voiceId, setVoiceId] = useState(VOICE_PRESETS[0].id);
+  const [customVoiceUrl, setCustomVoiceUrl] = useState<string | null>(null);
+  const [customVoiceName, setCustomVoiceName] = useState("");
+  const [voiceUploading, setVoiceUploading] = useState(false);
 
   // Step 3
   const [musicTab, setMusicTab] = useState<"preset" | "custom">("preset");
   const [musicIds, setMusicIds] = useState<string[]>([]);
   const [customMusicUrls, setCustomMusicUrls] = useState("");
+  const [uploadedMusicUrls, setUploadedMusicUrls] = useState<string[]>([]);
+  const [musicUploading, setMusicUploading] = useState(false);
 
   // Step 4-6
   const availableArtStyles = useMemo(
@@ -176,8 +185,15 @@ function CreateSeriesWizard() {
   }
 
   function skipAndContinue(kind: "voice" | "music" | "art" | "caption" | "social") {
-    if (kind === "voice") setSkipVoice(true);
-    if (kind === "music") setSkipMusic(true);
+    if (kind === "voice") {
+      setSkipVoice(true);
+      setCustomVoiceUrl(null);
+      setCustomVoiceName("");
+    }
+    if (kind === "music") {
+      setSkipMusic(true);
+      setUploadedMusicUrls([]);
+    }
     if (kind === "art") setSkipArtStyle(true);
     if (kind === "caption") setSkipCaptions(true);
     if (kind === "social") {
@@ -233,6 +249,56 @@ function CreateSeriesWizard() {
       toast.error((err as Error).message);
     } finally {
       setRefUploading(false);
+    }
+  }
+
+  async function uploadAudioFile(file: File, kind: "voice" | "music") {
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error("Audio must be under 20MB");
+      return;
+    }
+    const setBusy = kind === "voice" ? setVoiceUploading : setMusicUploading;
+    setBusy(true);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(new Error("Read failed"));
+        reader.readAsDataURL(file);
+      });
+      const res = await fnUploadAudio({
+        data: {
+          base64: dataUrl,
+          contentType: file.type || "audio/mpeg",
+          kind,
+          filename: file.name,
+        },
+      });
+      if (!res.ok || !res.url) throw new Error(res.error || "Upload failed");
+      if (kind === "voice") {
+        setCustomVoiceUrl(res.url);
+        setCustomVoiceName(file.name);
+        setSkipVoice(false);
+        setVoiceTab("upload");
+        toast.success(
+          res.durationSec
+            ? `Voice uploaded (${Math.round(res.durationSec)}s)`
+            : "Voice uploaded",
+        );
+      } else {
+        setUploadedMusicUrls((prev) => [res.url!, ...prev].slice(0, 5));
+        setSkipMusic(false);
+        setMusicTab("custom");
+        toast.success(
+          res.durationSec
+            ? `Music uploaded (${Math.round(res.durationSec)}s)`
+            : "Music uploaded",
+        );
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -319,9 +385,7 @@ function CreateSeriesWizard() {
       setVisualMode("full_video");
       setSkipVoice(true);
       setSkipMusic(true);
-      setSkipCaptions(true);
-      setMusicIds([]);
-      setCustomMusicUrls("");
+      // Captions still available — user can keep or skip in step 5
     } else {
       setSkipVoice(false);
       setSkipMusic(false);
@@ -381,7 +445,7 @@ function CreateSeriesWizard() {
         !!(ytNicheLabel.trim() || customNiche.trim() || nicheId)
       );
     }
-    if (step === 2) return skipVoice || !!voiceId;
+    if (step === 2) return skipVoice || !!customVoiceUrl || !!voiceId;
     if (step === 4) return skipArtStyle || !!artStyle;
     if (step === 5) return skipCaptions || !!captionStyle;
     if (step === 8) return name.trim().length >= 2 && !!publishTime && !!publishDate;
@@ -496,17 +560,21 @@ function CreateSeriesWizard() {
           lockedScript: nicheMode === "youtube" ? lockedScript.trim() || null : null,
           sourceYoutubeUrl: nicheMode === "youtube" ? sourceYoutubeUrl : null,
           lockedTitle: nicheMode === "youtube" ? lockedTitle.trim() || null : null,
-          voiceId: skipVoice ? null : voiceId,
-          skipVoice,
+          voiceId: skipVoice && !customVoiceUrl ? null : voiceId,
+          customVoiceUrl: skipVoice ? null : customVoiceUrl,
+          skipVoice: skipVoice && !customVoiceUrl,
           musicIds: skipMusic ? [] : musicTab === "preset" ? musicIds : [],
           customMusicUrls: skipMusic
             ? []
-            : musicTab === "custom"
-              ? customMusicUrls
-                  .split("\n")
-                  .map((s) => s.trim())
-                  .filter(Boolean)
-              : [],
+            : [
+                ...uploadedMusicUrls,
+                ...(musicTab === "custom"
+                  ? customMusicUrls
+                      .split("\n")
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  : []),
+              ].filter(Boolean),
           skipMusic,
           artStyle: skipArtStyle ? "auto" : artStyle,
           skipArtStyle,
@@ -595,15 +663,15 @@ function CreateSeriesWizard() {
             {step === 1 &&
               "Choose format & niche — or paste a YouTube URL to extract a script."}
             {step === 2 &&
-              "Pick an ElevenLabs voice, or Skip for silent / normal video (UGC & commercial can skip)."}
+              "Pick an ElevenLabs voice, upload your own narration, or Skip for silent video. Captions still burn in either way."}
             {step === 3 &&
-              "Optional background music — Skip if you want normal video without a soundtrack."}
+              "Optional background music — use a preset, paste a URL, or upload your own MP3/WAV."}
             {step === 4 &&
               (isProductMode
                 ? "Upload product/brand references (optional). Skip art style to let AI match visuals to the script — UGC & ads still use full AI video."
                 : "Pick an art style, or Skip so AI chooses visuals that fit each scene of the script.")}
             {step === 5 &&
-              "Choose burned-in caption style, or Skip for real video without narration captions."}
+              "Choose burned-in caption style (shown with or without voice/music), or Skip for no on-screen text."}
             {step === 6 &&
               (isProductMode
                 ? "UGC & commercial always generate full AI video (not image slideshows)."
@@ -850,10 +918,10 @@ function CreateSeriesWizard() {
           )}
 
           {step === 2 && (
-            <div className="space-y-2">
-              {skipVoice && (
+            <div className="space-y-4">
+              {skipVoice && !customVoiceUrl && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-                  Voice skipped — video will generate without ElevenLabs narration.
+                  Voice skipped — video will generate without narration audio. Captions still appear if enabled.
                   <Button
                     type="button"
                     size="sm"
@@ -865,64 +933,137 @@ function CreateSeriesWizard() {
                   </Button>
                 </div>
               )}
-              {VOICE_PRESETS.map((v) => {
-                const previewKey = `voice:${v.id}`;
-                const isPlaying = playingId === previewKey;
-                const isLoading = previewLoading === previewKey;
-                return (
-                  <div
-                    key={v.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      setSkipVoice(false);
-                      setVoiceId(v.id);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        setSkipVoice(false);
-                        setVoiceId(v.id);
-                      }
-                    }}
-                    className={cn(
-                      "w-full text-left rounded-xl border px-4 py-3.5 flex items-center gap-3 cursor-pointer",
-                      !skipVoice && voiceId === v.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border/50 hover:border-border",
-                      skipVoice && "opacity-50",
-                    )}
-                  >
-                    <div className="h-10 w-10 rounded-lg bg-primary/10 grid place-items-center">
-                      <Mic2 className="h-4 w-4 text-primary" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium">{v.label}</div>
-                      <div className="text-sm text-muted-foreground">{v.description}</div>
-                    </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-9 w-9 rounded-full shrink-0"
-                      disabled={isLoading}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        playPreview(previewKey, () =>
-                          fnPreviewVoice({ data: { voiceId: v.id } }),
-                        );
+              <div className="flex gap-4 border-b border-border/50">
+                <TabBtn
+                  active={voiceTab === "preset"}
+                  onClick={() => setVoiceTab("preset")}
+                  icon={<Mic2 className="h-3.5 w-3.5" />}
+                  label="AI voices"
+                />
+                <TabBtn
+                  active={voiceTab === "upload"}
+                  onClick={() => setVoiceTab("upload")}
+                  icon={<Upload className="h-3.5 w-3.5" />}
+                  label="Upload my voice"
+                />
+              </div>
+              {voiceTab === "preset" ? (
+                <div className="space-y-2">
+                  {VOICE_PRESETS.map((v) => {
+                    const previewKey = `voice:${v.id}`;
+                    const isPlaying = playingId === previewKey;
+                    const isLoading = previewLoading === previewKey;
+                    return (
+                      <div
+                        key={v.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          setSkipVoice(false);
+                          setCustomVoiceUrl(null);
+                          setCustomVoiceName("");
+                          setVoiceId(v.id);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            setSkipVoice(false);
+                            setCustomVoiceUrl(null);
+                            setCustomVoiceName("");
+                            setVoiceId(v.id);
+                          }
+                        }}
+                        className={cn(
+                          "w-full text-left rounded-xl border px-4 py-3.5 flex items-center gap-3 cursor-pointer",
+                          !skipVoice && !customVoiceUrl && voiceId === v.id
+                            ? "border-primary bg-primary/5"
+                            : "border-border/50 hover:border-border",
+                          skipVoice && !customVoiceUrl && "opacity-50",
+                        )}
+                      >
+                        <div className="h-10 w-10 rounded-lg bg-primary/10 grid place-items-center">
+                          <Mic2 className="h-4 w-4 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{v.label}</div>
+                          <div className="text-sm text-muted-foreground">{v.description}</div>
+                        </div>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="outline"
+                          className="h-9 w-9 rounded-full shrink-0"
+                          disabled={isLoading}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playPreview(previewKey, () =>
+                              fnPreviewVoice({ data: { voiceId: v.id } }),
+                            );
+                          }}
+                        >
+                          {isLoading ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : isPlaying ? (
+                            <Pause className="h-4 w-4" />
+                          ) : (
+                            <Play className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <label className="block rounded-xl border border-dashed border-border/60 p-8 text-center cursor-pointer hover:border-primary/50 transition-colors">
+                    <input
+                      type="file"
+                      accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/aac,audio/ogg,.mp3,.wav,.m4a,.aac,.ogg"
+                      className="hidden"
+                      disabled={voiceUploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void uploadAudioFile(f, "voice");
+                        e.target.value = "";
                       }}
-                    >
-                      {isLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : isPlaying ? (
-                        <Pause className="h-4 w-4" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                );
-              })}
+                    />
+                    {voiceUploading ? (
+                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
+                    ) : (
+                      <Upload className="mx-auto h-6 w-6 mb-2 opacity-60" />
+                    )}
+                    <div className="text-sm font-medium mt-2">
+                      {voiceUploading ? "Uploading…" : "Upload your narration audio"}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      MP3 / WAV / M4A up to 20MB — used instead of ElevenLabs for this series.
+                    </p>
+                  </label>
+                  {customVoiceUrl && (
+                    <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 flex items-center gap-3">
+                      <Mic2 className="h-4 w-4 text-primary shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate">
+                          {customVoiceName || "Custom voice"}
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">
+                          {customVoiceUrl}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setCustomVoiceUrl(null);
+                          setCustomVoiceName("");
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1005,20 +1146,61 @@ function CreateSeriesWizard() {
                 </div>
               ) : (
                 <div className="space-y-4">
+                  <label className="block rounded-xl border border-dashed border-border/60 p-8 text-center cursor-pointer hover:border-primary/50 transition-colors">
+                    <input
+                      type="file"
+                      accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/aac,audio/ogg,.mp3,.wav,.m4a,.aac,.ogg"
+                      className="hidden"
+                      disabled={musicUploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) void uploadAudioFile(f, "music");
+                        e.target.value = "";
+                      }}
+                    />
+                    {musicUploading ? (
+                      <Loader2 className="mx-auto h-6 w-6 animate-spin text-primary" />
+                    ) : (
+                      <Upload className="mx-auto h-6 w-6 mb-2 opacity-60" />
+                    )}
+                    <div className="text-sm font-medium mt-2">
+                      {musicUploading ? "Uploading…" : "Upload your music / audio"}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      MP3 / WAV / M4A up to 20MB
+                    </p>
+                  </label>
+                  {uploadedMusicUrls.length > 0 && (
+                    <div className="space-y-2">
+                      {uploadedMusicUrls.map((url) => (
+                        <div
+                          key={url}
+                          className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 flex items-center gap-3"
+                        >
+                          <Music className="h-4 w-4 text-primary shrink-0" />
+                          <div className="flex-1 min-w-0 text-xs truncate">{url}</div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              setUploadedMusicUrls((prev) => prev.filter((u) => u !== url))
+                            }
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div>
-                    <Label>TikTok Sound URLs</Label>
+                    <Label>Or paste sound URLs</Label>
                     <Textarea
                       className="mt-1.5 min-h-[100px]"
-                      placeholder="Enter TikTok sound URLs, one per line."
+                      placeholder="Enter direct audio URLs, one per line."
                       value={customMusicUrls}
                       onChange={(e) => setCustomMusicUrls(e.target.value)}
                     />
-                  </div>
-                  <div className="rounded-xl border border-dashed border-border/60 p-8 text-center text-sm text-muted-foreground">
-                    <Upload className="mx-auto h-6 w-6 mb-2 opacity-60" />
-                    Sound file upload can be added next — paste URLs for now.
-                    <br />
-                    MP3 / WAV up to 10MB.
                   </div>
                 </div>
               )}
@@ -1580,7 +1762,12 @@ function CreateSeriesWizard() {
                 disabled={!canContinue()}
                 onClick={() => {
                   if (step === 2) setSkipVoice(false);
-                  if (step === 3) setSkipMusic(musicIds.length === 0 && !customMusicUrls.trim());
+                  if (step === 3)
+                    setSkipMusic(
+                      musicIds.length === 0 &&
+                        !customMusicUrls.trim() &&
+                        uploadedMusicUrls.length === 0,
+                    );
                   if (step === 4) setSkipArtStyle(false);
                   if (step === 5) setSkipCaptions(false);
                   goNextStep();
