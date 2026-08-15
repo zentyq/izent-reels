@@ -27,12 +27,43 @@ function ConnectorsPage() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null);
 
+  async function refreshAccounts(pid: string) {
+    if (!pid) {
+      setAccounts([]);
+      return;
+    }
+    const r = await fnListAccounts({ data: { projectId: pid } });
+    const aArr = Array.isArray(r.data)
+      ? r.data
+      : Array.isArray(r.data?.data)
+        ? r.data.data
+        : [];
+    setAccounts(aArr);
+  }
+
   useEffect(() => {
     async function load() {
       setLoading(true);
       try {
-        const r = await fnListProjects();
-        const pArr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.data) ? r.data.data : []);
+        let r = await fnListProjects();
+        let pArr = Array.isArray(r.data)
+          ? r.data
+          : Array.isArray(r.data?.data)
+            ? r.data.data
+            : [];
+
+        // New users should get one Ayrshare Business profile automatically.
+        if (!pArr.length) {
+          const created = await fnCreateProject({ data: { name: "My Profile" } });
+          if (created?.profileKey) {
+            r = await fnListProjects();
+            pArr = Array.isArray(r.data)
+              ? r.data
+              : Array.isArray(r.data?.data)
+                ? r.data.data
+                : [{ projectId: created.profileKey, name: created.title || "My Profile" }];
+          }
+        }
 
         if (pArr.length > 0) {
           setProjects(pArr);
@@ -43,6 +74,8 @@ function ConnectorsPage() {
           setProjectId(pid);
           localStorage.setItem("projectId", pid);
         }
+      } catch (e) {
+        toast.error((e as Error).message || "Could not load social profiles");
       } finally {
         setLoading(false);
       }
@@ -52,23 +85,52 @@ function ConnectorsPage() {
 
   useEffect(() => {
     if (!projectId) return;
-    async function load() {
-      const r = await fnListAccounts({ data: { projectId } });
-      const aArr = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.data) ? r.data.data : []);
-      setAccounts(aArr);
+    refreshAccounts(projectId).catch(() => setAccounts([]));
+  }, [projectId]);
+
+  // After Ayrshare linking popup closes / tab returns, refresh connected accounts.
+  useEffect(() => {
+    function onVis() {
+      if (document.visibilityState === "visible" && projectId) {
+        refreshAccounts(projectId).catch(() => {});
+      }
     }
-    load();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, [projectId]);
 
   async function onConnect(platform: string) {
-    if (!projectId) return toast.error("Select a project first");
+    let pid = projectId;
+    if (!pid) {
+      try {
+        const created = await fnCreateProject({ data: { name: "My Profile" } });
+        pid = created?.profileKey || "";
+        if (pid) {
+          setProjectId(pid);
+          localStorage.setItem("projectId", pid);
+          setProjects((prev) =>
+            prev.length
+              ? prev
+              : [{ projectId: pid, name: created.title || "My Profile" }],
+          );
+        }
+      } catch (e) {
+        return toast.error((e as Error).message || "Could not create social profile");
+      }
+    }
+    if (!pid) return toast.error("Select a project first");
     setConnecting(platform);
     try {
       const r = await fnOAuthUrl({
-        data: { projectId, platform: platform as never, redirectUrl: window.location.origin },
+        data: {
+          projectId: pid,
+          platform: platform as never,
+          redirectUrl: `${window.location.origin}/connectors`,
+        },
       });
       const url = (r as any).url || (r as any).authorizationUrl;
       if (url) window.open(url, "_blank", "noopener,noreferrer");
+      else toast.error("Could not open Ayrshare linking page");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -123,7 +185,12 @@ function ConnectorsPage() {
 
           {/* Refresh */}
           <button
-            onClick={() => { if (projectId) { const r = fnListAccounts({ data: { projectId } }).then(r => { const a = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.data) ? r.data.data : []); setAccounts(a); toast.success("Refreshed"); }); } }}
+            onClick={() => {
+              if (!projectId) return;
+              refreshAccounts(projectId)
+                .then(() => toast.success("Refreshed"))
+                .catch((e) => toast.error((e as Error).message));
+            }}
             className="grid h-10 w-10 place-items-center rounded-xl border border-border/50 bg-card/80 backdrop-blur text-muted-foreground hover:text-foreground hover:bg-card transition-all shadow-sm"
             title="Refresh accounts"
           >

@@ -57,10 +57,20 @@ async function resolveAyrsharePrivateKey(): Promise<string> {
   const fromEnv = process.env.AYRSHARE_PRIVATE_KEY;
   if (!fromEnv || fromEnv === "YOUR_AYRSHARE_PRIVATE_KEY") {
     throw new Error(
-      "Please add AYRSHARE_PRIVATE_KEY in Railway (full private.key from Ayrshare Integration Package) to connect social accounts.",
+      "Please add AYRSHARE_PRIVATE_KEY in Coolify (full private.key from Ayrshare Integration Package) to connect social accounts.",
     );
   }
   return normalizeAyrsharePrivateKey(fromEnv);
+}
+
+function ayrshareDomain() {
+  const domain = (process.env.AYRSHARE_DOMAIN || "").trim();
+  if (!domain) {
+    throw new Error(
+      "AYRSHARE_DOMAIN is not configured. Set your Ayrshare Business domain (for example id-jfpUR).",
+    );
+  }
+  return domain;
 }
 
 async function getUserId(): Promise<string> {
@@ -240,7 +250,7 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
     const userId = await getUserId();
     const profileKey = await resolveOwnedProfileKey(userId, data.projectId);
     const privateKey = await resolveAyrsharePrivateKey();
-    const domain = process.env.AYRSHARE_DOMAIN || "id-ENrMP";
+    const domain = ayrshareDomain();
 
     const res = await fetch("https://api.ayrshare.com/api/profiles/generateJWT", {
       method: "POST",
@@ -252,6 +262,10 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
         domain,
         privateKey,
         profileKey,
+        // Force logout so sticky Ayrshare browser sessions do not attach the wrong user.
+        logout: true,
+        // Return users to Izent after linking (Ayrshare supports redirect on Done).
+        redirect: data.redirectUrl,
         allowedSocial: [data.platform.toLowerCase()],
       }),
     });
@@ -264,7 +278,16 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
       throw new Error(`[${res.status}] ${body.message || raw}`);
     }
 
-    return { authorizationUrl: body.url };
+    const authorizationUrl =
+      body.url ||
+      (body.token
+        ? `https://profile.ayrshare.com/social-accounts?domain=${encodeURIComponent(domain)}&jwt=${encodeURIComponent(body.token)}`
+        : null);
+    if (!authorizationUrl) {
+      throw new Error("Ayrshare did not return a JWT linking URL.");
+    }
+
+    return { authorizationUrl };
   });
 
 export const uploadMedia = createServerFn({ method: "POST" })
