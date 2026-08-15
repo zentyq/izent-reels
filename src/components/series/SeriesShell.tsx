@@ -65,6 +65,8 @@ export function SeriesShell({
         setNeedsSetup(setup);
         if (setup && !onSetup) {
           navigate({ to: "/series/create" });
+          // Still mark ready so /series/create can render after navigation.
+          setReady(true);
           return;
         }
         if (
@@ -77,6 +79,7 @@ export function SeriesShell({
             to: "/subscribe",
             search: { seriesId: series.pendingPaymentSeriesId },
           });
+          setReady(true);
           return;
         }
         setReady(true);

@@ -9,6 +9,24 @@ import { getUserAdminFields, promoteAdminIfNeeded, readAppSettings } from "./adm
 const SESSION_COOKIE = "izent_session";
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+/** Only mark cookies Secure when the public app URL is HTTPS (HTTP deploys drop Secure cookies). */
+function sessionCookieSecure() {
+  const appUrl = process.env.APP_URL || "";
+  if (appUrl.startsWith("https://")) return true;
+  if (appUrl.startsWith("http://")) return false;
+  return process.env.NODE_ENV === "production";
+}
+
+function setSessionCookie(token: string) {
+  setCookie(SESSION_COOKIE, token, {
+    httpOnly: true,
+    secure: sessionCookieSecure(),
+    sameSite: "lax",
+    maxAge: SESSION_MAX_AGE / 1000,
+    path: "/",
+  });
+}
+
 // ─── Register ──────────────────────────────────────────────
 export const register = createServerFn({ method: "POST" })
   .inputValidator(
@@ -52,13 +70,7 @@ export const register = createServerFn({ method: "POST" })
       },
     });
 
-    setCookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: SESSION_MAX_AGE / 1000,
-      path: "/",
-    });
+    setSessionCookie(token);
 
     return {
       ok: true as const,
@@ -99,13 +111,7 @@ export const login = createServerFn({ method: "POST" })
       },
     });
 
-    setCookie(SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
-      maxAge: SESSION_MAX_AGE / 1000,
-      path: "/",
-    });
+    setSessionCookie(token);
 
     return {
       ok: true as const,
