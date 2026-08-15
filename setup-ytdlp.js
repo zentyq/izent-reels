@@ -25,9 +25,10 @@ async function download() {
     }
     console.log('Successfully downloaded and prepared yt-dlp standalone binary!');
   } catch (error) {
-    console.error(`Error downloading yt-dlp:`, error);
+    // Do not fail npm install/docker build if GitHub is rate-limited;
+    // Dockerfile / runtime can fetch yt-dlp separately.
+    console.error(`Error downloading yt-dlp (non-fatal):`, error);
     if (fs.existsSync(dest)) fs.unlinkSync(dest);
-    process.exit(1);
   }
 }
 

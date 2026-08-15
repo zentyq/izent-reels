@@ -2,8 +2,9 @@
 # Stack: TanStack Start (Vite + Nitro node-server) + Prisma + Postgres
 FROM node:22-slim
 
-# System deps for yt-dlp audio/video extract + fluent-ffmpeg merges
+# System deps: openssl (Prisma), ffmpeg/yt-dlp tooling
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssl \
     python3 \
     ffmpeg \
     curl \
@@ -12,13 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Dummy URL so prisma generate never blocks on missing DATABASE_URL
+ENV DATABASE_URL="postgresql://build:build@127.0.0.1:5432/build"
+
 # Copy lockfile first for better layer caching when possible
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY setup-ytdlp.js ./
 
-# Install deps (runs postinstall: prisma generate + yt-dlp download)
-RUN npm ci
+# Install deps (postinstall: prisma generate + yt-dlp). yt-dlp download is best-effort.
+RUN npm ci \
+ && if [ ! -x ./yt-dlp ]; then curl -fsSL -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp || true; fi \
+ && if [ -f ./yt-dlp ]; then chmod +x yt-dlp; fi
 
 # App source
 COPY . .
