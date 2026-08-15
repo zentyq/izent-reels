@@ -13,6 +13,13 @@ const MAX_SIZE = 50 * 1024 * 1024;
 
 /** Known image / video MIME types we accept */
 const ACCEPTED_TYPES = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/aac",
+  "audio/ogg",
   "image/jpeg",
   "image/png",
   "image/gif",
@@ -44,6 +51,11 @@ const EXT_MAP: Record<string, string> = {
   avi: "video/x-msvideo",
   mkv: "video/x-matroska",
   ogv: "video/ogg",
+  mp3: "audio/mpeg",
+  wav: "audio/wav",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  ogg: "audio/ogg",
 };
 
 /**
@@ -485,7 +497,8 @@ function filenameFromUrl(url: string, contentType: string): string {
 async function downloadWithYtDlp(
   url: string,
   downloadId?: string,
-  instagramCookie?: string | null
+  instagramCookie?: string | null,
+  audioOnly = false,
 ): Promise<{ ok: true; base64: string; contentType: string; filename: string; sizeBytes: number; isVideo: boolean } | { ok: false; error: string }> {
   let tempDir: string;
   try {
@@ -520,13 +533,21 @@ async function downloadWithYtDlp(
     const args = [
       url,
       "-o", outputTemplate,
-      "-f", "best[vcodec^=avc][filesize<50M][ext=mp4]/best[vcodec^=h264][filesize<50M][ext=mp4]/best[filesize<50M][ext=mp4]/best[ext=mp4]/best",
-      "--merge-output-format", "mp4",
       "--print", "after_move:filepath",
       "--no-playlist",
       "--socket-timeout", "30",
       "--restrict-filenames",
     ];
+    if (audioOnly) {
+      args.push("-x", "--audio-format", "mp3", "--audio-quality", "5");
+    } else {
+      args.push(
+        "-f",
+        "best[vcodec^=avc][filesize<50M][ext=mp4]/best[vcodec^=h264][filesize<50M][ext=mp4]/best[filesize<50M][ext=mp4]/best[ext=mp4]/best",
+        "--merge-output-format",
+        "mp4",
+      );
+    }
 
     if (isInsta) {
       args.push("--extractor-args", "instagram:api_type=graphql");
@@ -588,7 +609,9 @@ async function downloadWithYtDlp(
         try {
           const files = await readdir(tempDir);
           console.log("yt-dlp: files in tempDir:", files);
-          const mediaFile = files.find((f) => /\.(mp4|webm|mkv|mov|avi|mp3|m4a|jpg|png|gif|webp)$/i.test(f));
+          const mediaFile = files.find((f) =>
+            /\.(mp4|webm|mkv|mov|avi|mp3|m4a|wav|aac|ogg|jpg|png|gif|webp)$/i.test(f),
+          );
           if (mediaFile) {
             filepath = join(tempDir, mediaFile);
           }
@@ -656,6 +679,7 @@ export const downloadMediaFromUrl = createServerFn({ method: "POST" })
     z.object({
       url: z.string().url().max(2000),
       downloadId: z.string().optional(),
+      audioOnly: z.boolean().optional().default(false),
     }),
   )
   .handler(async ({ data }) => {
@@ -698,12 +722,22 @@ export const downloadMediaFromUrl = createServerFn({ method: "POST" })
         }
 
         console.log(`Instagram direct extraction failed or rejected, falling back to yt-dlp...`);
-        return await downloadWithYtDlp(data.url, data.downloadId, instagramCookie);
+        return await downloadWithYtDlp(
+          data.url,
+          data.downloadId,
+          instagramCookie,
+          data.audioOnly,
+        );
       }
 
       // ── Check if this is a platform URL that needs yt-dlp ────────
       if (isPlatformUrl(data.url)) {
-        return await downloadWithYtDlp(data.url, data.downloadId, instagramCookie);
+        return await downloadWithYtDlp(
+          data.url,
+          data.downloadId,
+          instagramCookie,
+          data.audioOnly,
+        );
       }
 
       // ── Direct media URL: use fetch ────────────────────────────────
@@ -739,7 +773,7 @@ export const downloadMediaFromUrl = createServerFn({ method: "POST" })
       // If content is HTML, it's likely a platform page — try yt-dlp as fallback
       if (contentType === "text/html" || contentType === "text/plain") {
         console.log(`URL returned ${contentType}, trying yt-dlp as fallback...`);
-        return await downloadWithYtDlp(data.url);
+        return await downloadWithYtDlp(data.url, undefined, undefined, data.audioOnly);
       }
 
       if (!ACCEPTED_TYPES.has(contentType)) {

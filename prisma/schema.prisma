@@ -14,6 +14,10 @@ model User {
   passwordHash    String?
   phone           String?  @unique
   instagramCookie String?
+  /// user | admin
+  role            String   @default("user")
+  /// active | suspended
+  status          String   @default("active")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -22,6 +26,15 @@ model User {
   profiles   AyrshareProfile[]
   series     Series[]
   studioJobs StudioJob[]
+}
+
+/// Global key/value config edited from the admin dashboard
+model AppSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedBy String?
+  updatedAt DateTime @updatedAt
 }
 
 model AyrshareProfile {
@@ -81,7 +94,7 @@ model Series {
   lockedScript    String?
   sourceYoutubeUrl String?
   voiceId         String   @default("JBFqnCBsd6RMkjVDRZzb")
-  /// User-uploaded narration audio (mp3/wav/m4a) — used instead of ElevenLabs when set
+  /// Custom narration audio (uploaded file or extracted from a public link) — used instead of ElevenLabs when set
   customVoiceUrl  String?
   /// Skip ElevenLabs narration (UGC / commercial / silent "normal" video)
   skipVoice       Boolean  @default(false)

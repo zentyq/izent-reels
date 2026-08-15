@@ -14,6 +14,7 @@ import {
   Play,
   Plus,
   Rocket,
+  Sparkles,
   Upload,
   Youtube,
 } from "lucide-react";
@@ -36,16 +37,14 @@ import {
   CAPTION_STYLES,
   WAVESPEED_VIDEO_MODELS,
   MUSIC_PRESETS,
-  SERIES_CONTENT_MODES,
   SERIES_STEPS,
-  VIDEO_FORMATS,
-  VISUAL_MODES,
   VOICE_PRESETS,
   artStylesForContentMode,
   durationsForFormat,
   nichesForContentMode,
   platformsForFormat,
 } from "@/lib/series/constants";
+import { getPlatform } from "@/lib/platforms";
 import {
   createSeries,
   extractYouTubeScript,
@@ -55,10 +54,11 @@ import {
   uploadSeriesAudio,
   uploadSeriesReferenceImage,
 } from "@/lib/series.functions";
+import { downloadMediaFromUrl } from "@/lib/download.functions";
 import {
-  SERIES_TIMEZONE,
   formatScheduleLabels,
-  londonWallToUtcIso,
+  localTimezone,
+  wallTimeToUtcIso,
 } from "@/lib/series/timezone";
 import {
   createProject,
@@ -66,6 +66,7 @@ import {
   listAccounts,
   listProjects,
 } from "@/lib/ayrshare.functions";
+import { getSeriesDefaults } from "@/lib/admin.functions";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
@@ -74,10 +75,10 @@ import { CalendarDays } from "lucide-react";
 export const Route = createFileRoute("/series/create")({
   head: () => ({
     meta: [
-      { title: "Create Series — IzentSocial" },
+      { title: "Create Series - Izent Reels" },
       {
         name: "description",
-        content: "Set up an auto-generating faceless video series.",
+        content: "Set up an auto-generating video series.",
       },
     ],
   }),
@@ -89,6 +90,7 @@ function CreateSeriesWizard() {
   const fnCreate = useServerFn(createSeries);
   const fnUploadRef = useServerFn(uploadSeriesReferenceImage);
   const fnUploadAudio = useServerFn(uploadSeriesAudio);
+  const fnDownloadMedia = useServerFn(downloadMediaFromUrl);
   const fnListProjects = useServerFn(listProjects);
   const fnCreateProject = useServerFn(createProject);
   const fnListAccounts = useServerFn(listAccounts);
@@ -97,6 +99,7 @@ function CreateSeriesWizard() {
   const fnPreviewMusic = useServerFn(previewSeriesMusic);
   const fnExtractYt = useServerFn(extractYouTubeScript);
   const fnReviewYt = useServerFn(reviewImportedYouTubeScript);
+  const fnDefaults = useServerFn(getSeriesDefaults);
 
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
@@ -105,11 +108,9 @@ function CreateSeriesWizard() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const previewCache = useRef<Record<string, string>>({});
 
-  // Step 1
-  const [videoFormat, setVideoFormat] = useState<"short" | "long">("short");
-  const [contentMode, setContentMode] = useState<"faceless" | "ugc" | "commercial">(
-    "faceless",
-  );
+  // Step 1 — always short 9:16 faceless stories
+  const videoFormat = "short" as const;
+  const contentMode = "faceless" as const;
   const [nicheMode, setNicheMode] = useState<"preset" | "custom" | "youtube">("preset");
   const nichePresets = useMemo(() => nichesForContentMode(contentMode), [contentMode]);
   const durationOptions = useMemo(() => durationsForFormat(videoFormat), [videoFormat]);
@@ -132,11 +133,12 @@ function CreateSeriesWizard() {
   const [ytSourceTitle, setYtSourceTitle] = useState("");
 
   // Step 2
-  const [voiceTab, setVoiceTab] = useState<"preset" | "upload">("preset");
+  const [voiceTab, setVoiceTab] = useState<"preset" | "custom">("preset");
   const [voiceId, setVoiceId] = useState(VOICE_PRESETS[0].id);
   const [customVoiceUrl, setCustomVoiceUrl] = useState<string | null>(null);
   const [customVoiceName, setCustomVoiceName] = useState("");
   const [voiceUploading, setVoiceUploading] = useState(false);
+  const [voiceSourceUrl, setVoiceSourceUrl] = useState("");
 
   // Step 3
   const [musicTab, setMusicTab] = useState<"preset" | "custom">("preset");
@@ -163,7 +165,9 @@ function CreateSeriesWizard() {
   const [visualMode, setVisualMode] = useState<"images" | "animated_hook" | "full_video">(
     "images",
   );
-  const [videoModel, setVideoModel] = useState(WAVESPEED_VIDEO_MODELS[0].id);
+  const [videoModel, setVideoModel] = useState<string>(WAVESPEED_VIDEO_MODELS[0].id);
+  const selectedVideoModel =
+    WAVESPEED_VIDEO_MODELS.find((m) => m.id === videoModel) || WAVESPEED_VIDEO_MODELS[0];
   const [publishDate, setPublishDate] = useState<Date | undefined>(() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
@@ -217,7 +221,7 @@ function CreateSeriesWizard() {
       const uploaded: string[] = [];
       for (const file of batch) {
         if (file.size > 10 * 1024 * 1024) {
-          toast.error(`${file.name} is over 10MB — skipped`);
+          toast.error(`${file.name} is over 10MB - skipped`);
           continue;
         }
         const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -279,7 +283,7 @@ function CreateSeriesWizard() {
         setCustomVoiceUrl(res.url);
         setCustomVoiceName(file.name);
         setSkipVoice(false);
-        setVoiceTab("upload");
+        setVoiceTab("custom");
         toast.success(
           res.durationSec
             ? `Voice uploaded (${Math.round(res.durationSec)}s)`
@@ -302,6 +306,49 @@ function CreateSeriesWizard() {
     }
   }
 
+  async function importVoiceFromUrl() {
+    const sourceUrl = voiceSourceUrl.trim();
+    if (!sourceUrl) return toast.error("Paste a voice or video link first");
+    try {
+      new URL(sourceUrl);
+    } catch {
+      return toast.error("Enter a valid public URL");
+    }
+
+    setVoiceUploading(true);
+    try {
+      const downloaded = await fnDownloadMedia({
+        data: { url: sourceUrl, audioOnly: true },
+      });
+      if (!downloaded.ok || !downloaded.base64) {
+        throw new Error(downloaded.error || "Could not extract audio from this link");
+      }
+      const uploaded = await fnUploadAudio({
+        data: {
+          base64: downloaded.base64,
+          contentType: downloaded.contentType || "audio/mpeg",
+          kind: "voice",
+          filename: downloaded.filename || "custom-voice.mp3",
+        },
+      });
+      if (!uploaded.ok || !uploaded.url) {
+        throw new Error(uploaded.error || "Could not save the extracted voice");
+      }
+      setCustomVoiceUrl(uploaded.url);
+      setCustomVoiceName(downloaded.filename || "Custom voice source");
+      setSkipVoice(false);
+      toast.success(
+        uploaded.durationSec
+          ? `Voice extracted (${Math.round(uploaded.durationSec)}s)`
+          : "Voice extracted and ready",
+      );
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setVoiceUploading(false);
+    }
+  }
+
   // Step 7
   const [projectId, setProjectId] = useState("");
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -311,10 +358,14 @@ function CreateSeriesWizard() {
 
   // Step 8
   const [name, setName] = useState("");
-  const [duration, setDuration] = useState<string>("30");
+  const [duration, setDuration] = useState<string>("30-40");
   const [publishTime, setPublishTime] = useState("12:00");
-  const [postsPerDay, setPostsPerDay] = useState(1);
-  const [postIntervalHours, setPostIntervalHours] = useState(4);
+  const [postsPerDay] = useState(1);
+  const [postIntervalHours] = useState(4);
+  const [allowYouTubeImport, setAllowYouTubeImport] = useState(true);
+  const [allowCustomVoice, setAllowCustomVoice] = useState(true);
+  const [allowCustomMusic, setAllowCustomMusic] = useState(true);
+  const [allowFullAiVideo, setAllowFullAiVideo] = useState(true);
 
   const nicheLabel = useMemo(() => {
     if (nicheMode === "youtube") return ytNicheLabel.trim() || customNiche.trim();
@@ -361,9 +412,9 @@ function CreateSeriesWizard() {
 
       if (!res.needsEdit) {
         setYtConfirmed(true);
-        toast.success("Script ready — no edits needed. Continue the wizard to generate.");
+        toast.success("Script ready - no edits needed. Continue the wizard to generate.");
       } else {
-        toast.message("AI edited the script — review and confirm before continuing");
+        toast.message("AI edited the script - review and confirm before continuing");
       }
     } catch (e) {
       toast.error((e as Error).message);
@@ -385,7 +436,7 @@ function CreateSeriesWizard() {
       setVisualMode("full_video");
       setSkipVoice(true);
       setSkipMusic(true);
-      // Captions still available — user can keep or skip in step 5
+      // Captions still available - user can keep or skip in step 5
     } else {
       setSkipVoice(false);
       setSkipMusic(false);
@@ -423,6 +474,31 @@ function CreateSeriesWizard() {
       }
     }
     boot().catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    fnDefaults()
+      .then((res) => {
+        if (!res.ok) return;
+        const d = res.defaults;
+        setVoiceId(d.voiceId);
+        const opts = durationsForFormat(videoFormat);
+        setDuration(opts.some((o) => o.id === d.duration) ? d.duration : opts[0].id);
+        setArtStyle(d.artStyle);
+        setCaptionStyle(d.captionStyle);
+        setVisualMode(d.visualMode);
+        setVideoModel(d.videoModel);
+        setPublishTime(d.publishTime);
+        setAllowYouTubeImport(d.allowYouTubeImport);
+        setAllowCustomVoice(d.allowCustomVoice);
+        setAllowCustomMusic(d.allowCustomMusic);
+        setAllowFullAiVideo(d.allowFullAiVideo);
+        if (!d.allowYouTubeImport) setNicheMode((m) => (m === "youtube" ? "preset" : m));
+        if (!d.allowCustomVoice) setVoiceTab("preset");
+        if (!d.allowCustomMusic) setMusicTab("preset");
+        if (!d.allowFullAiVideo && d.visualMode !== "images") setVisualMode("images");
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -595,18 +671,17 @@ function CreateSeriesWizard() {
             const y = publishDate.getFullYear();
             const m = publishDate.getMonth() + 1;
             const d = publishDate.getDate();
-            // Calendar day + publishTime interpreted as UK (Europe/London), not browser OS TZ
-            return londonWallToUtcIso(y, m, d, publishTime);
+            return wallTimeToUtcIso(y, m, d, publishTime, localTimezone());
           })(),
-          timezone: SERIES_TIMEZONE,
-          // Keep Ayrshare profile even if social step was skipped — connect later in Series Settings
+          timezone: localTimezone(),
+          // Keep Ayrshare profile even if social step was skipped - connect later in Series Settings
           projectId: projectId || null,
           platforms: skipSocial ? [] : platforms,
           syncGoogleCalendar: true,
         },
       });
       if (!res.ok) throw new Error(res.error || "Failed to create series");
-      toast.success("Series created — first video queued");
+      toast.success("Series setup complete — choose a plan to unlock it");
       if ((res as any).calendarLink) {
         toast.message("Open Google Calendar to confirm the post event", {
           action: {
@@ -615,7 +690,7 @@ function CreateSeriesWizard() {
           },
         });
       }
-      navigate({ to: "/series" });
+      navigate({ to: "/subscribe", search: { seriesId: res.series.id } });
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -627,7 +702,7 @@ function CreateSeriesWizard() {
     <SeriesShell>
       <div className="max-w-3xl mx-auto">
         <div className="text-sm text-muted-foreground mb-4">
-          Series <span className="mx-1">›</span> Create New Series
+          Set up your series. After this, videos generate on your dashboard.
         </div>
 
         <div
@@ -661,21 +736,21 @@ function CreateSeriesWizard() {
           </div>
           <p className="mt-2 text-sm text-muted-foreground">
             {step === 1 &&
-              "Choose format & niche — or paste a YouTube URL to extract a script."}
+              (allowYouTubeImport
+                ? "Pick a niche, write a custom one, or paste a YouTube URL to extract a script."
+                : "Pick a niche or write a custom one.")}
             {step === 2 &&
               "Pick an ElevenLabs voice, upload your own narration, or Skip for silent video. Captions still burn in either way."}
             {step === 3 &&
-              "Optional background music — use a preset, paste a URL, or upload your own MP3/WAV."}
+              "Optional background music - use a preset, paste a URL, or upload your own MP3/WAV."}
             {step === 4 &&
               (isProductMode
-                ? "Upload product/brand references (optional). Skip art style to let AI match visuals to the script — UGC & ads still use full AI video."
+                ? "Upload product/brand references (optional). Skip art style to let AI match visuals to the script - UGC & ads still use full AI video."
                 : "Pick an art style, or Skip so AI chooses visuals that fit each scene of the script.")}
             {step === 5 &&
               "Choose burned-in caption style (shown with or without voice/music), or Skip for no on-screen text."}
             {step === 6 &&
-              (isProductMode
-                ? "UGC & commercial always generate full AI video (not image slideshows)."
-                : "Choose images-only, animated hook, or full AI video per scene — plus optional effects.")}
+              "Add visual effects to make your videos more engaging and eye-catching."}
             {step === 7 &&
               "Connect social accounts now, or Skip and connect later in Series Settings."}
             {step === 8 &&
@@ -686,47 +761,6 @@ function CreateSeriesWizard() {
         <div className="min-h-[320px] space-y-4">
           {step === 1 && (
             <>
-              <div className="grid sm:grid-cols-2 gap-3 mb-5">
-                {VIDEO_FORMATS.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setVideoFormat(f.id as "short" | "long")}
-                    className={cn(
-                      "text-left rounded-xl border px-4 py-3.5 transition-colors",
-                      videoFormat === f.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border/50 hover:border-border",
-                    )}
-                  >
-                    <div className="font-medium flex items-center gap-2">
-                      {f.label}
-                      <Badge variant="outline" className="text-[10px]">
-                        {f.aspectRatio}
-                      </Badge>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">{f.description}</div>
-                  </button>
-                ))}
-              </div>
-              <div className="grid sm:grid-cols-3 gap-3 mb-5">
-                {SERIES_CONTENT_MODES.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setContentMode(m.id as typeof contentMode)}
-                    className={cn(
-                      "text-left rounded-xl border px-4 py-3.5 transition-colors",
-                      contentMode === m.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border/50 hover:border-border",
-                    )}
-                  >
-                    <div className="font-medium">{m.label}</div>
-                    <div className="text-xs text-muted-foreground mt-1">{m.description}</div>
-                  </button>
-                ))}
-              </div>
               <div className="flex gap-4 border-b border-border/50 mb-4">
                 <TabBtn
                   active={nicheMode === "preset"}
@@ -740,15 +774,17 @@ function CreateSeriesWizard() {
                   icon={<Rocket className="h-3.5 w-3.5" />}
                   label="Custom"
                 />
-                <TabBtn
-                  active={nicheMode === "youtube"}
-                  onClick={() => setNicheMode("youtube")}
-                  icon={<Youtube className="h-3.5 w-3.5" />}
-                  label="From YouTube"
-                />
+                {allowYouTubeImport && (
+                  <TabBtn
+                    active={nicheMode === "youtube"}
+                    onClick={() => setNicheMode("youtube")}
+                    icon={<Youtube className="h-3.5 w-3.5" />}
+                    label="From YouTube"
+                  />
+                )}
               </div>
               {nicheMode === "preset" ? (
-                <div className="space-y-2">
+                <div className="max-h-[min(320px,46vh)] overflow-y-auto space-y-2 pr-1">
                   {nichePresets.map((n) => (
                     <button
                       key={n.id}
@@ -854,7 +890,7 @@ function CreateSeriesWizard() {
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="secondary">Detected niche</Badge>
                         <span className="text-sm font-medium">
-                          {ytNicheLabel || customNiche || "—"}
+                          {ytNicheLabel || customNiche || "-"}
                         </span>
                         {ytNeedsEdit ? (
                           <Badge className="bg-amber-600 hover:bg-amber-600">AI edited</Badge>
@@ -897,7 +933,7 @@ function CreateSeriesWizard() {
                               return toast.error("Script is too short");
                             }
                             setYtConfirmed(true);
-                            toast.success("Script confirmed — continue the wizard");
+                            toast.success("Script confirmed - continue the wizard");
                           }}
                           className="gradient-bg text-primary-foreground"
                         >
@@ -907,7 +943,7 @@ function CreateSeriesWizard() {
                       )}
                       {ytConfirmed && (
                         <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                          Ready — finish the wizard to generate the first video from this script.
+                          Ready - finish the wizard to generate the first video from this script.
                         </p>
                       )}
                     </div>
@@ -921,7 +957,7 @@ function CreateSeriesWizard() {
             <div className="space-y-4">
               {skipVoice && !customVoiceUrl && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-                  Voice skipped — video will generate without narration audio. Captions still appear if enabled.
+                  Voice skipped - video will generate without narration audio. Captions still appear if enabled.
                   <Button
                     type="button"
                     size="sm"
@@ -940,15 +976,17 @@ function CreateSeriesWizard() {
                   icon={<Mic2 className="h-3.5 w-3.5" />}
                   label="AI voices"
                 />
-                <TabBtn
-                  active={voiceTab === "upload"}
-                  onClick={() => setVoiceTab("upload")}
-                  icon={<Upload className="h-3.5 w-3.5" />}
-                  label="Upload my voice"
-                />
+                {allowCustomVoice && (
+                  <TabBtn
+                    active={voiceTab === "custom"}
+                    onClick={() => setVoiceTab("custom")}
+                    icon={<Mic2 className="h-3.5 w-3.5" />}
+                    label="Custom voice"
+                  />
+                )}
               </div>
               {voiceTab === "preset" ? (
-                <div className="space-y-2">
+                <div className="max-h-[min(320px,46vh)] overflow-y-auto space-y-2 pr-1">
                   {VOICE_PRESETS.map((v) => {
                     const previewKey = `voice:${v.id}`;
                     const isPlaying = playingId === previewKey;
@@ -1032,12 +1070,60 @@ function CreateSeriesWizard() {
                       <Upload className="mx-auto h-6 w-6 mb-2 opacity-60" />
                     )}
                     <div className="text-sm font-medium mt-2">
-                      {voiceUploading ? "Uploading…" : "Upload your narration audio"}
+                      {voiceUploading ? "Uploading…" : "Upload your voice"}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      MP3 / WAV / M4A up to 20MB — used instead of ElevenLabs for this series.
+                      MP3 / WAV / M4A up to 20MB - used as narration for this series.
                     </p>
                   </label>
+
+                  <div className="relative flex items-center gap-3">
+                    <div className="h-px flex-1 bg-border/60" />
+                    <span className="text-xs text-muted-foreground">or paste a link</span>
+                    <div className="h-px flex-1 bg-border/60" />
+                  </div>
+
+                  <div className="rounded-xl border border-border/60 p-4 space-y-3">
+                    <div>
+                      <div className="font-medium">Extract from a link</div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Paste a public audio or video link. We extract its audio and use it as
+                        this series&apos; narration.
+                      </p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Input
+                        type="url"
+                        placeholder="https://youtube.com/watch?v=… or direct audio link"
+                        value={voiceSourceUrl}
+                        onChange={(e) => setVoiceSourceUrl(e.target.value)}
+                        disabled={voiceUploading}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void importVoiceFromUrl();
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        onClick={() => void importVoiceFromUrl()}
+                        disabled={voiceUploading || !voiceSourceUrl.trim()}
+                        className="shrink-0"
+                      >
+                        {voiceUploading ? (
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        ) : (
+                          <Mic2 className="h-4 w-4 mr-2" />
+                        )}
+                        Extract voice
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Use content you own or have permission to reuse. Private or protected links
+                      cannot be extracted.
+                    </p>
+                  </div>
                   {customVoiceUrl && (
                     <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 flex items-center gap-3">
                       <Mic2 className="h-4 w-4 text-primary shrink-0" />
@@ -1056,6 +1142,7 @@ function CreateSeriesWizard() {
                         onClick={() => {
                           setCustomVoiceUrl(null);
                           setCustomVoiceName("");
+                          setVoiceSourceUrl("");
                         }}
                       >
                         Remove
@@ -1076,15 +1163,17 @@ function CreateSeriesWizard() {
                   icon={<Layers className="h-3.5 w-3.5" />}
                   label="Preset music"
                 />
-                <TabBtn
-                  active={musicTab === "custom"}
-                  onClick={() => setMusicTab("custom")}
-                  icon={<Music className="h-3.5 w-3.5" />}
-                  label="Custom"
-                />
+                {allowCustomMusic && (
+                  <TabBtn
+                    active={musicTab === "custom"}
+                    onClick={() => setMusicTab("custom")}
+                    icon={<Music className="h-3.5 w-3.5" />}
+                    label="Custom"
+                  />
+                )}
               </div>
               {musicTab === "preset" ? (
-                <div className="space-y-2">
+                <div className="max-h-[min(320px,46vh)] overflow-y-auto space-y-2 pr-1">
                   {MUSIC_PRESETS.map((m) => {
                     const selected = musicIds.includes(m.id);
                     const previewKey = `music:${m.id}`;
@@ -1211,7 +1300,7 @@ function CreateSeriesWizard() {
             <div className="space-y-5">
               {skipArtStyle && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-                  Art style skipped — AI will pick visuals that fit each scene of the script.
+                  Art style skipped - AI will pick visuals that fit each scene of the script.
                   <Button
                     type="button"
                     size="sm"
@@ -1343,7 +1432,7 @@ function CreateSeriesWizard() {
             <div className="space-y-3">
               {skipCaptions && (
                 <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
-                  Captions skipped — no burned-in narration text on the video.
+                  Captions skipped - no burned-in narration text on the video.
                   <Button
                     type="button"
                     size="sm"
@@ -1355,6 +1444,7 @@ function CreateSeriesWizard() {
                   </Button>
                 </div>
               )}
+            <div className="max-h-[min(320px,46vh)] overflow-y-auto pr-1">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {CAPTION_STYLES.map((c) => (
                 <button
@@ -1395,72 +1485,59 @@ function CreateSeriesWizard() {
               ))}
             </div>
             </div>
+            </div>
           )}
 
           {step === 6 && (
-            <div className="space-y-3">
-              <div className="space-y-2">
-                <Label>Visual mode</Label>
-                <p className="text-sm text-muted-foreground">
-                  {isProductMode
-                    ? "UGC & commercial always use full AI video (real video clips per scene)."
-                    : "Every scene gets its own AI image. Optionally turn scenes into real AI video."}
-                </p>
-                {(isProductMode
-                  ? VISUAL_MODES.filter((m) => m.id === "full_video")
-                  : VISUAL_MODES
-                ).map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setVisualMode(m.id as typeof visualMode)}
-                    className={cn(
-                      "w-full text-left rounded-xl border px-4 py-3.5 transition-colors",
-                      visualMode === m.id
-                        ? "border-primary bg-primary/5"
-                        : "border-border/50 hover:border-border",
-                    )}
-                  >
-                    <div className="font-medium flex items-center gap-2">
-                      {m.label}
-                      {m.id !== "images" && (
-                        <Badge className="bg-orange-500/15 text-orange-600 border-0">PREMIUM</Badge>
-                      )}
-                    </div>
-                    <div className="text-sm text-muted-foreground mt-0.5">{m.description}</div>
-                  </button>
-                ))}
-              </div>
-              {visualMode !== "images" && (
-                <div className="rounded-xl border border-border/50 p-4">
-                  <Label>AI video model</Label>
-                  <Select value={videoModel} onValueChange={setVideoModel}>
-                    <SelectTrigger className="mt-1.5">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {WAVESPEED_VIDEO_MODELS.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label} · {m.note}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {visualMode === "full_video" && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Full AI video generates a real clip for every scene, then FFmpeg merges them
-                      into one reel. Longer videos take more time and credits.
-                    </p>
-                  )}
-                </div>
-              )}
+            <div className="space-y-4">
               <EffectCard
                 title="Glitch effect"
                 badge="NEW"
-                description="Glitches the subject with chromatic distortion — perfect for horror and thrillers."
+                badgeTone="new"
+                description="Glitches the subject with chromatic distortion and eerie shake - perfect for horror, thrillers, and scary content."
                 checked={glitchEffect}
                 onCheckedChange={setGlitchEffect}
               />
+              {allowFullAiVideo && (
+                <EffectCard
+                  title="Animated hook"
+                  badge="PREMIUM"
+                  badgeTone="premium"
+                  description="Generate a 5-second motion video for the first scene to hook viewers instantly."
+                  checked={visualMode !== "images"}
+                  onCheckedChange={(on) => setVisualMode(on ? "animated_hook" : "images")}
+                >
+                  {visualMode !== "images" && (
+                    <div className="mt-4 border-t border-border/50 pt-4 space-y-1.5">
+                      <Label className="text-muted-foreground font-normal">Video model</Label>
+                      <Select value={videoModel} onValueChange={setVideoModel}>
+                        <SelectTrigger className="h-12">
+                          <span className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-primary" />
+                            <span className="font-medium">{selectedVideoModel.label}</span>
+                            <span className="text-muted-foreground">
+                              {selectedVideoModel.credits} credits
+                            </span>
+                          </span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {WAVESPEED_VIDEO_MODELS.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              <span className="flex items-center gap-2">
+                                <span className="font-medium">{m.label}</span>
+                                <span className="text-muted-foreground">{m.credits} credits</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-sm text-muted-foreground pt-1">
+                        Cost per video: {selectedVideoModel.credits} premium credits.
+                      </p>
+                    </div>
+                  )}
+                </EffectCard>
+              )}
             </div>
           )}
 
@@ -1496,6 +1573,7 @@ function CreateSeriesWizard() {
                         (a) => String(a.platform).toUpperCase() === p.id,
                       );
                       const selected = platforms.includes(p.id);
+                      const meta = getPlatform(p.id);
                       return (
                         <button
                           key={p.id}
@@ -1510,7 +1588,14 @@ function CreateSeriesWizard() {
                             !connected && "opacity-50",
                           )}
                         >
-                          <span className="font-medium">{p.label}</span>
+                          <span className="flex items-center gap-3 font-medium">
+                            {meta && (
+                              <span className={cn("shrink-0", meta.smallColor)}>
+                                {meta.iconSmall}
+                              </span>
+                            )}
+                            {p.label}
+                          </span>
                           <span className="text-xs text-muted-foreground">
                             {connected ? (selected ? "Selected" : "Connected") : "Not connected"}
                           </span>
@@ -1542,17 +1627,28 @@ function CreateSeriesWizard() {
                         ✕
                       </button>
                     </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {platformOptions.map((p) => (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => connectPlatform(p.id)}
-                          className="rounded-xl border border-border/60 p-4 hover:border-primary/50 text-sm font-medium"
-                        >
-                          {p.label}
-                        </button>
-                      ))}
+                    <div className="grid grid-cols-2 gap-3">
+                      {platformOptions.map((p) => {
+                        const meta = getPlatform(p.id);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => connectPlatform(p.id)}
+                            className={cn(
+                              "rounded-xl border border-border/60 p-4 hover:border-primary/50 text-sm font-medium flex flex-col items-center gap-2.5 transition-colors",
+                              meta?.bgHover,
+                            )}
+                          >
+                            {meta && (
+                              <span className={cn(meta.largeColor || meta.smallColor)}>
+                                {meta.iconLarge}
+                              </span>
+                            )}
+                            {p.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -1578,24 +1674,31 @@ function CreateSeriesWizard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {durationOptions.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.label}
-                        {"monetizable" in d && d.monetizable ? " · Monetizable" : ""}
-                      </SelectItem>
-                    ))}
+                    {durationOptions.map((d) => {
+                      const tiktok = getPlatform("TIKTOK");
+                      return (
+                        <SelectItem key={d.id} value={d.id}>
+                          <span className="flex items-center gap-2 w-full">
+                            <span>{d.label}</span>
+                            {"monetizable" in d && d.monetizable ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-medium">
+                                {tiktok && (
+                                  <span className="[&>svg]:h-3 [&>svg]:w-3">{tiktok.iconSmall}</span>
+                                )}
+                                Monetizable
+                              </span>
+                            ) : null}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-1.5">
-                  {videoFormat === "long"
-                    ? "Long 16:9 videos (5–30 min). AI builds title, description & YouTube thumbnail; scenes are merged with FFmpeg."
-                    : "Short 9:16 reels (10s–5min). ~1 scene per 10s, each with its own image (and AI video if selected)."}
-                </p>
               </div>
               <div>
                 <div className="font-medium mb-1 flex items-center gap-2">
                   <CalendarDays className="h-4 w-4 text-primary" />
-                  Google Calendar schedule
+                  Schedule
                 </div>
                 <p className="text-sm text-muted-foreground mb-3">
                   Pick the first publish date & time. We sync a Calendar event and auto-post via
@@ -1619,47 +1722,6 @@ function CreateSeriesWizard() {
                         className="w-40 mt-1.5"
                       />
                     </div>
-                    <div>
-                      <Label>Videos per day</Label>
-                      <Select
-                        value={String(postsPerDay)}
-                        onValueChange={(v) => setPostsPerDay(Number(v))}
-                      >
-                        <SelectTrigger className="w-40 mt-1.5">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[1, 2, 3, 4, 5].map((n) => (
-                            <SelectItem key={n} value={String(n)}>
-                              {n} / day
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {postsPerDay > 1 && (
-                      <div>
-                        <Label>Post interval</Label>
-                        <Select
-                          value={String(postIntervalHours)}
-                          onValueChange={(v) => setPostIntervalHours(Number(v))}
-                        >
-                          <SelectTrigger className="w-40 mt-1.5">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {[1, 2, 3, 4, 5, 6, 8, 12].map((n) => (
-                              <SelectItem key={n} value={String(n)}>
-                                Every {n}h
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-[11px] text-muted-foreground mt-1 max-w-[10rem]">
-                          e.g. 2:00 + 4h → 2:00, 6:00, 10:00
-                        </p>
-                      </div>
-                    )}
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button variant="outline" size="sm">
@@ -1682,24 +1744,24 @@ function CreateSeriesWizard() {
                       </PopoverContent>
                     </Popover>
                     <p className="text-xs text-muted-foreground max-w-xs">
-                      Times are <span className="text-foreground font-medium">UK ({SERIES_TIMEZONE})</span>
-                      {" — "}GMT/BST. Hosting server location is ignored.
+                      Times use your local timezone
+                      {" "}
+                      <span className="text-foreground font-medium">({localTimezone()})</span>.
                       {publishDate && publishTime
                         ? (() => {
                             try {
-                              const iso = londonWallToUtcIso(
+                              const iso = wallTimeToUtcIso(
                                 publishDate.getFullYear(),
                                 publishDate.getMonth() + 1,
                                 publishDate.getDate(),
                                 publishTime,
+                                localTimezone(),
                               );
-                              const { uk, utc } = formatScheduleLabels(new Date(iso));
+                              const { local } = formatScheduleLabels(new Date(iso), localTimezone());
                               return (
                                 <>
                                   <br />
-                                  First post: {uk}
-                                  <br />
-                                  Fires at: {utc}
+                                  First post: {local}
                                 </>
                               );
                             } catch {
@@ -1711,11 +1773,6 @@ function CreateSeriesWizard() {
                   </div>
                 </div>
               </div>
-              <div className="rounded-xl bg-muted/50 px-4 py-3 text-sm text-muted-foreground">
-                After create, full videos generate automatically in the background (script +
-                images + AI video + merge). They post at your scheduled times with the interval
-                you set — no manual Generate click needed.
-              </div>
               {nicheLabel && (
                 <div className="text-xs text-muted-foreground">
                   Niche: <span className="text-foreground">{nicheLabel}</span>
@@ -1725,7 +1782,7 @@ function CreateSeriesWizard() {
           )}
         </div>
 
-        <div className="mt-8 flex items-center justify-between gap-3">
+        <div className="sticky bottom-0 z-10 mt-6 flex items-center justify-between gap-3 border-t border-border/40 bg-background/95 py-4 backdrop-blur">
           <Button
             variant="outline"
             disabled={stepIndex === 0 || submitting}
@@ -1830,28 +1887,49 @@ function TabBtn({
 function EffectCard({
   title,
   badge,
+  badgeTone = "new",
   description,
   checked,
   onCheckedChange,
+  children,
 }: {
   title: string;
   badge?: string;
+  badgeTone?: "new" | "premium";
   description: string;
   checked: boolean;
   onCheckedChange: (v: boolean) => void;
+  children?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border/50 p-4 flex items-start justify-between gap-4">
-      <div>
-        <div className="font-medium flex items-center gap-2">
-          {title}
-          {badge && (
-            <Badge className="bg-primary/15 text-primary border-0">{badge}</Badge>
-          )}
+    <div
+      className={cn(
+        "rounded-xl border bg-card p-4 transition-colors",
+        checked ? "border-primary/40" : "border-border/50",
+      )}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="font-medium flex items-center gap-2 flex-wrap">
+            {title}
+            {badge && (
+              <Badge
+                className={cn(
+                  "border-0 text-[10px] px-1.5 py-0",
+                  badgeTone === "premium"
+                    ? "bg-orange-500/15 text-orange-600"
+                    : "bg-primary/15 text-primary",
+                )}
+              >
+                {badge}
+              </Badge>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">{description}</p>
         </div>
-        <p className="text-sm text-muted-foreground mt-1">{description}</p>
+        <Switch checked={checked} onCheckedChange={onCheckedChange} className="shrink-0 mt-0.5" />
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      {children}
     </div>
   );
 }

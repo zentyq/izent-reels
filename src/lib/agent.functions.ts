@@ -14,7 +14,7 @@ CRITICAL RULES:
 4. **SEO STEALTH MODE**: NEVER act as an SEO Q&A bot. If the user asks general SEO questions ("what are the best keywords for X?"), gracefully refuse to answer directly. Instead, you should autonomously use the SEO tools in the background *while* you are writing captions or generating hashtags to ensure your outputs are highly optimized based on real search volume and difficulty data. The user should only ever see your perfectly optimized final caption, NOT raw SEO data tables.
 
 Available Accounts Context:
-When you are ready to broadcast, ask the user to confirm the platforms. Once confirmed, you will use the 'broadcast_post' tool. The client will pass the available accounts implicitly, you just need to specify the platforms the user requested (e.g. ["X", "FACEBOOK"] or ["ALL"]).`;
+When you are ready to broadcast, ask the user to confirm the platforms. Once confirmed, you will use the 'broadcast_post' tool. The client will pass the available accounts implicitly, you just need to specify the platforms the user requested (e.g. ["YOUTUBE", "FACEBOOK", "INSTAGRAM", "TIKTOK"] or ["ALL"]).`;
 
 const TOOLS = [
   {
@@ -51,7 +51,7 @@ const TOOLS = [
             platforms: { 
               type: "ARRAY", 
               items: { type: "STRING" },
-              description: "Array of platforms to post to (e.g. ['X', 'FACEBOOK', 'TIKTOK', 'LINKEDIN', 'INSTAGRAM', 'YOUTUBE'] or ['ALL'])" 
+              description: "Array of platforms to post to (e.g. ['YOUTUBE', 'FACEBOOK', 'INSTAGRAM', 'TIKTOK'] or ['ALL'])" 
             },
             hasMedia: { type: "BOOLEAN", description: "Set to true if you previously called download_media successfully." }
           },

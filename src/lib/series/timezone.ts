@@ -1,5 +1,21 @@
-/** All Faceless Series schedules use UK time (Europe/London), including BST/GMT. */
-export const SERIES_TIMEZONE = "Europe/London";
+/** Fallback when no timezone is stored (legacy series). */
+export const SERIES_TIMEZONE = "UTC";
+
+/** Browser / device local IANA timezone. */
+export function localTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || SERIES_TIMEZONE;
+  } catch {
+    return SERIES_TIMEZONE;
+  }
+}
+
+/** Prefer the series-stored timezone; fall back to UTC (not UK-only). */
+export function resolveSeriesTimezone(tz?: string | null): string {
+  const t = (tz || "").trim();
+  if (t) return t;
+  return SERIES_TIMEZONE;
+}
 
 /** Offset of `timeZone` relative to UTC at `date` (ms). */
 export function timeZoneOffsetMs(timeZone: string, date: Date): number {
@@ -77,16 +93,13 @@ export function hmInTimeZone(date: Date, timeZone: string) {
   };
 }
 
-/** Always Europe/London for series scheduling (ignore stale UTC / browser TZ). */
-export function resolveSeriesTimezone(_tz?: string | null): string {
-  return SERIES_TIMEZONE;
-}
-
 /**
- * Parse `datetime-local` value as UK wall time → UTC ISO.
- * e.g. "2026-08-11T07:45" means 07:45 in London, not the browser OS timezone.
+ * Parse `datetime-local` value as wall time in `timeZone` → UTC.
  */
-export function londonDatetimeLocalToUtc(datetimeLocal: string): Date {
+export function londonDatetimeLocalToUtc(
+  datetimeLocal: string,
+  timeZone: string = localTimezone(),
+): Date {
   const m = datetimeLocal.trim().match(
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/,
   );
@@ -96,7 +109,7 @@ export function londonDatetimeLocalToUtc(datetimeLocal: string): Date {
     return d;
   }
   return zonedWallTimeToUtc(
-    SERIES_TIMEZONE,
+    timeZone,
     Number(m[1]),
     Number(m[2]),
     Number(m[3]),
@@ -105,20 +118,27 @@ export function londonDatetimeLocalToUtc(datetimeLocal: string): Date {
   );
 }
 
-/** Format a UTC Date as `YYYY-MM-DDTHH:mm` in Europe/London for datetime-local inputs. */
-export function toLondonDatetimeLocalValue(date: Date): string {
-  const { year, month, day } = ymdInTimeZone(date, SERIES_TIMEZONE);
-  const { hour, minute } = hmInTimeZone(date, SERIES_TIMEZONE);
+/** Format a UTC Date as `YYYY-MM-DDTHH:mm` in `timeZone` for datetime-local inputs. */
+export function toLondonDatetimeLocalValue(
+  date: Date,
+  timeZone: string = localTimezone(),
+): string {
+  const { year, month, day } = ymdInTimeZone(date, timeZone);
+  const { hour, minute } = hmInTimeZone(date, timeZone);
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 /** Human labels for schedule confirmation. */
-export function formatScheduleLabels(utcDate: Date): {
+export function formatScheduleLabels(
+  utcDate: Date,
+  timeZone: string = localTimezone(),
+): {
+  local: string;
   uk: string;
   utc: string;
 } {
-  const uk = utcDate.toLocaleString("en-GB", {
-    timeZone: SERIES_TIMEZONE,
+  const local = utcDate.toLocaleString(undefined, {
+    timeZone,
     weekday: "short",
     year: "numeric",
     month: "short",
@@ -128,7 +148,7 @@ export function formatScheduleLabels(utcDate: Date): {
     hour12: false,
     timeZoneName: "short",
   });
-  const utc = utcDate.toLocaleString("en-GB", {
+  const utc = utcDate.toLocaleString(undefined, {
     timeZone: "UTC",
     weekday: "short",
     year: "numeric",
@@ -139,16 +159,28 @@ export function formatScheduleLabels(utcDate: Date): {
     hour12: false,
     timeZoneName: "short",
   });
-  return { uk, utc };
+  return { local, uk: local, utc };
 }
 
-/** Build UTC instant from a calendar day + HH:mm in London. */
+/** Build UTC instant from a calendar day + HH:mm in the given timezone. */
+export function wallTimeToUtcIso(
+  year: number,
+  month: number,
+  day: number,
+  publishTime: string,
+  timeZone: string = localTimezone(),
+): string {
+  const [hh, mm] = publishTime.split(":").map(Number);
+  return zonedWallTimeToUtc(timeZone, year, month, day, hh || 0, mm || 0).toISOString();
+}
+
+/** @deprecated Use wallTimeToUtcIso */
 export function londonWallToUtcIso(
   year: number,
   month: number,
   day: number,
   publishTime: string,
+  timeZone: string = localTimezone(),
 ): string {
-  const [hh, mm] = publishTime.split(":").map(Number);
-  return zonedWallTimeToUtc(SERIES_TIMEZONE, year, month, day, hh || 0, mm || 0).toISOString();
+  return wallTimeToUtcIso(year, month, day, publishTime, timeZone);
 }

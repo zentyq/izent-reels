@@ -1,8 +1,9 @@
+# Izent Reels — Coolify / Docker production image
+# Stack: TanStack Start (Vite + Nitro node-server) + Prisma + Postgres
 FROM node:22-slim
 
-# Install necessary system dependencies for yt-dlp and fluent-ffmpeg
-# We need python3 for yt-dlp, ffmpeg for merging, and curl to download yt-dlp
-RUN apt-get update && apt-get install -y \
+# System deps for yt-dlp audio/video extract + fluent-ffmpeg merges
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ffmpeg \
     curl \
@@ -11,19 +12,30 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy EVERYTHING first so that package postinstall scripts
-# (like Prisma generate and setup-ytdlp.js) have access to the files they need
-COPY . .
+# Copy lockfile first for better layer caching when possible
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+COPY setup-ytdlp.js ./
 
-# Install npm dependencies (this will automatically run postinstall scripts)
+# Install deps (runs postinstall: prisma generate + yt-dlp download)
 RUN npm ci
 
-# Build the TanStack Start application
+# App source
+COPY . .
+
+# Production build (TanStack Start → .output)
+ENV NODE_ENV=production
 RUN npm run build
 
-# Expose the port (TanStack Start defaults to 8080 or 3000)
+# Runtime
 ENV PORT=8080
+ENV HOST=0.0.0.0
+ENV NITRO_HOST=0.0.0.0
+ENV NITRO_PORT=8080
 EXPOSE 8080
 
-# Start the server using the command defined in package.json
+# Persist generated media between restarts (mount a volume at /app/uploads in Coolify)
+RUN mkdir -p /app/uploads
+
+# prisma db push then Nitro node server
 CMD ["npm", "run", "start"]

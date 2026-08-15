@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { CheckCircle2, RefreshCw, Loader2, Sparkles } from "lucide-react";
 import { PLATFORMS } from "@/lib/platforms";
+import { SeriesShell } from "@/components/series/SeriesShell";
 
 import { listProjects, listAccounts, generateOAuthUrl, createProject } from "@/lib/ayrshare.functions";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -78,7 +79,8 @@ function ConnectorsPage() {
   const connectedCount = accounts.length;
 
   return (
-    <div className="p-4 sm:p-10 max-w-6xl mx-auto space-y-6 sm:space-y-8 animate-in fade-in duration-500">
+    <SeriesShell>
+      <div className="max-w-6xl mx-auto space-y-6 sm:space-y-8 animate-in fade-in duration-500">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
         <div className="space-y-1.5">
@@ -191,6 +193,7 @@ function ConnectorsPage() {
       <p className="text-center text-xs text-muted-foreground/70 pt-2">
         Clicking a platform opens a secure authorization window. Complete it, then refresh to see your linked account.
       </p>
-    </div>
+      </div>
+    </SeriesShell>
   );
 }

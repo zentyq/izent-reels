@@ -25,14 +25,18 @@ import {
   WAVESPEED_VIDEO_MODELS,
   artStylesForContentMode,
   durationsForFormat,
+  normalizeShortDuration,
   platformsForFormat,
 } from "@/lib/series/constants";
-import { SERIES_TIMEZONE } from "@/lib/series/timezone";
+import { getPlatform } from "@/lib/platforms";
+import { localTimezone } from "@/lib/series/timezone";
+import { cn } from "@/lib/utils";
 import {
   getSeriesSettings,
   updateSeriesSettings,
   uploadSeriesAudio,
 } from "@/lib/series.functions";
+import { downloadMediaFromUrl } from "@/lib/download.functions";
 import {
   createProject,
   generateOAuthUrl,
@@ -42,7 +46,7 @@ import {
 
 export const Route = createFileRoute("/series/settings")({
   head: () => ({
-    meta: [{ title: "Series Settings — IzentSocial" }],
+    meta: [{ title: "Series Settings - Izent Reels" }],
   }),
   component: SeriesSettingsPage,
 });
@@ -51,6 +55,7 @@ function SeriesSettingsPage() {
   const fnGet = useServerFn(getSeriesSettings);
   const fnUpdate = useServerFn(updateSeriesSettings);
   const fnUploadAudio = useServerFn(uploadSeriesAudio);
+  const fnDownloadMedia = useServerFn(downloadMediaFromUrl);
   const fnListProjects = useServerFn(listProjects);
   const fnCreateProject = useServerFn(createProject);
   const fnListAccounts = useServerFn(listAccounts);
@@ -66,6 +71,7 @@ function SeriesSettingsPage() {
   const [connecting, setConnecting] = useState<string | null>(null);
   const [linkingProject, setLinkingProject] = useState(false);
   const [audioUploading, setAudioUploading] = useState<"voice" | "music" | null>(null);
+  const [voiceSourceUrl, setVoiceSourceUrl] = useState("");
 
   const selected = useMemo(
     () => allSeries.find((s) => s.id === seriesId) || null,
@@ -87,7 +93,14 @@ function SeriesSettingsPage() {
       const sel = res.selected;
       if (sel) {
         setSeriesId(sel.id);
-        setForm({ ...sel });
+        setForm({
+          ...sel,
+          duration:
+            sel.videoFormat === "long"
+              ? sel.duration
+              : normalizeShortDuration(sel.duration || "30-40"),
+          timezone: sel.timezone || localTimezone(),
+        });
       } else {
         setForm(null);
       }
@@ -130,7 +143,7 @@ function SeriesSettingsPage() {
       }
       const pid = arr[0]?.projectId || arr[0]?.id;
       if (!pid) {
-        toast.error("Could not create a social profile — check Ayrshare setup");
+        toast.error("Could not create a social profile - check Ayrshare setup");
         return null;
       }
       // Re-bind even if form already had a projectId (may have been another user's)
@@ -192,6 +205,43 @@ function SeriesSettingsPage() {
     setForm((prev: any) => (prev ? { ...prev, ...p } : prev));
   }
 
+  async function importVoiceFromUrl() {
+    const sourceUrl = voiceSourceUrl.trim();
+    if (!sourceUrl) return toast.error("Paste a voice or video link first");
+    try {
+      new URL(sourceUrl);
+    } catch {
+      return toast.error("Enter a valid public URL");
+    }
+
+    setAudioUploading("voice");
+    try {
+      const downloaded = await fnDownloadMedia({
+        data: { url: sourceUrl, audioOnly: true },
+      });
+      if (!downloaded.ok || !downloaded.base64) {
+        throw new Error(downloaded.error || "Could not extract audio from this link");
+      }
+      const uploaded = await fnUploadAudio({
+        data: {
+          base64: downloaded.base64,
+          contentType: downloaded.contentType || "audio/mpeg",
+          kind: "voice",
+          filename: downloaded.filename || "custom-voice.mp3",
+        },
+      });
+      if (!uploaded.ok || !uploaded.url) {
+        throw new Error(uploaded.error || "Could not save the extracted voice");
+      }
+      patch({ customVoiceUrl: uploaded.url, skipVoice: false });
+      toast.success("Voice extracted and ready");
+    } catch (err) {
+      toast.error((err as Error).message);
+    } finally {
+      setAudioUploading(null);
+    }
+  }
+
   async function onSave() {
     if (!form?.id) return;
     setSaving(true);
@@ -216,9 +266,9 @@ function SeriesSettingsPage() {
           videoModel: form.videoModel,
           duration: form.duration,
           publishTime: form.publishTime,
-          postsPerDay: Number(form.postsPerDay) || 1,
+          postsPerDay: 1,
           postIntervalHours: Number(form.postIntervalHours) || 4,
-          timezone: SERIES_TIMEZONE,
+          timezone: form.timezone || localTimezone(),
           projectId: form.projectId,
           platforms: form.platforms || [],
           glitchEffect: !!form.glitchEffect,
@@ -275,7 +325,7 @@ function SeriesSettingsPage() {
   return (
     <SeriesShell
       title="Series Settings"
-      subtitle="Configure Faceless Series options per series — separate from Agent settings."
+      subtitle="Configure how this series generates and posts."
     >
       {loading ? (
         <div className="flex justify-center py-20">
@@ -305,7 +355,7 @@ function SeriesSettingsPage() {
               <SelectContent>
                 {allSeries.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
-                    {s.name} · {s.contentMode}
+                    {s.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -330,16 +380,29 @@ function SeriesSettingsPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {durationOpts.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
+                    {durationOpts.map((d) => {
+                      const tiktok = getPlatform("TIKTOK");
+                      return (
+                        <SelectItem key={d.id} value={d.id}>
+                          <span className="flex items-center gap-2">
+                            <span>{d.label}</span>
+                            {"monetizable" in d && d.monetizable ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-primary/15 text-primary px-2 py-0.5 text-[10px] font-medium">
+                                {tiktok && (
+                                  <span className="[&>svg]:h-3 [&>svg]:w-3">{tiktok.iconSmall}</span>
+                                )}
+                                Monetizable
+                              </span>
+                            ) : null}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>First post time (each day, UK)</Label>
+                <Label>First post time</Label>
                 <Input
                   type="time"
                   className="mt-1.5"
@@ -348,49 +411,12 @@ function SeriesSettingsPage() {
                 />
               </div>
             </div>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <div>
-                <Label>Videos per day</Label>
-                <Select
-                  value={String(form.postsPerDay || 1)}
-                  onValueChange={(v) => patch({ postsPerDay: Number(v) })}
-                >
-                  <SelectTrigger className="mt-1.5">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <SelectItem key={n} value={String(n)}>
-                        {n} video{n > 1 ? "s" : ""} / day
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Interval between posts</Label>
-                <Select
-                  value={String(form.postIntervalHours || 4)}
-                  onValueChange={(v) => patch({ postIntervalHours: Number(v) })}
-                  disabled={(form.postsPerDay || 1) <= 1}
-                >
-                  <SelectTrigger className="mt-1.5">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4, 5, 6, 8, 12].map((n) => (
-                      <SelectItem key={n} value={String(n)}>
-                        Every {n} hour{n > 1 ? "s" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
             <p className="text-xs text-muted-foreground">
-              Example: 3/day from 2:00 with 4h interval → posts at 2:00, 6:00, 10:00{" "}
-              <span className="font-medium text-foreground">UK time ({SERIES_TIMEZONE})</span>.
-              Full videos generate automatically in the background, then post at each slot.
+              Times use your local timezone{" "}
+              <span className="font-medium text-foreground">
+                ({form.timezone || localTimezone()})
+              </span>
+              .
             </p>
             <div className="flex items-center justify-between">
               <div>
@@ -437,63 +463,98 @@ function SeriesSettingsPage() {
                       </SelectItem>
                     ))}
                     {form.customVoiceUrl && (
-                      <SelectItem value="custom">Uploaded voice</SelectItem>
+                      <SelectItem value="custom">Custom voice</SelectItem>
                     )}
                   </SelectContent>
                 </Select>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="file"
-                    accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,.mp3,.wav,.m4a"
-                    className="hidden"
-                    disabled={audioUploading === "voice"}
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (!file) return;
-                      if (file.size > 20 * 1024 * 1024) {
-                        return toast.error("Audio must be under 20MB");
-                      }
-                      setAudioUploading("voice");
-                      try {
-                        const dataUrl = await new Promise<string>((resolve, reject) => {
-                          const reader = new FileReader();
-                          reader.onload = () => resolve(String(reader.result || ""));
-                          reader.onerror = () => reject(new Error("Read failed"));
-                          reader.readAsDataURL(file);
-                        });
-                        const res = await fnUploadAudio({
-                          data: {
-                            base64: dataUrl,
-                            contentType: file.type || "audio/mpeg",
-                            kind: "voice",
-                            filename: file.name,
-                          },
-                        });
-                        if (!res.ok || !res.url) throw new Error(res.error || "Upload failed");
-                        patch({ customVoiceUrl: res.url, skipVoice: false });
-                        toast.success("Custom voice uploaded");
-                      } catch (err) {
-                        toast.error((err as Error).message);
-                      } finally {
-                        setAudioUploading(null);
-                      }
-                    }}
-                  />
-                  <Button type="button" size="sm" variant="outline" asChild>
-                    <span>
-                      {audioUploading === "voice" ? (
-                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                      ) : (
-                        <Upload className="h-3.5 w-3.5 mr-1.5" />
-                      )}
-                      Upload my voice
-                    </span>
-                  </Button>
-                </label>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="file"
+                      accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,.mp3,.wav,.m4a"
+                      className="hidden"
+                      disabled={audioUploading === "voice"}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!file) return;
+                        if (file.size > 20 * 1024 * 1024) {
+                          return toast.error("Audio must be under 20MB");
+                        }
+                        setAudioUploading("voice");
+                        try {
+                          const dataUrl = await new Promise<string>((resolve, reject) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(String(reader.result || ""));
+                            reader.onerror = () => reject(new Error("Read failed"));
+                            reader.readAsDataURL(file);
+                          });
+                          const res = await fnUploadAudio({
+                            data: {
+                              base64: dataUrl,
+                              contentType: file.type || "audio/mpeg",
+                              kind: "voice",
+                              filename: file.name,
+                            },
+                          });
+                          if (!res.ok || !res.url) throw new Error(res.error || "Upload failed");
+                          patch({ customVoiceUrl: res.url, skipVoice: false });
+                          toast.success("Custom voice uploaded");
+                        } catch (err) {
+                          toast.error((err as Error).message);
+                        } finally {
+                          setAudioUploading(null);
+                        }
+                      }}
+                    />
+                    <Button type="button" size="sm" variant="outline" asChild>
+                      <span>
+                        {audioUploading === "voice" ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5 mr-1.5" />
+                        )}
+                        Upload my voice
+                      </span>
+                    </Button>
+                  </label>
+
+                  <div className="space-y-2">
+                    <Label>Or paste a voice / video link</Label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Input
+                        type="url"
+                        placeholder="Paste a public audio or video link"
+                        value={voiceSourceUrl}
+                        disabled={audioUploading === "voice"}
+                        onChange={(e) => setVoiceSourceUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void importVoiceFromUrl();
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => void importVoiceFromUrl()}
+                        disabled={audioUploading === "voice" || !voiceSourceUrl.trim()}
+                      >
+                        {audioUploading === "voice" && (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        )}
+                        Extract voice
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Upload a file or extract audio from a public link for future videos.
+                    </p>
+                  </div>
+                </div>
                 {form.customVoiceUrl && (
                   <p className="text-xs text-muted-foreground truncate">
-                    Using uploaded voice: {form.customVoiceUrl}
+                    Using custom voice: {form.customVoiceUrl}
                   </p>
                 )}
               </>
@@ -767,15 +828,23 @@ function SeriesSettingsPage() {
                 );
                 const selectedPlat = (form.platforms || []).includes(p.id);
                 const busy = connecting === p.id || linkingProject;
+                const meta = getPlatform(p.id);
                 return (
                   <div
                     key={p.id}
                     className="flex items-center justify-between rounded-lg border border-border/50 px-3 py-2"
                   >
-                    <div>
-                      <div className="text-sm font-medium">{p.label}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {connected ? "Connected" : "Not connected"}
+                    <div className="flex items-center gap-3 min-w-0">
+                      {meta && (
+                        <span className={cn("shrink-0", meta.smallColor)}>
+                          {meta.iconSmall}
+                        </span>
+                      )}
+                      <div>
+                        <div className="text-sm font-medium">{p.label}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {connected ? "Connected" : "Not connected"}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -825,8 +894,7 @@ function SeriesSettingsPage() {
 
           {selected && (
             <p className="text-xs text-muted-foreground">
-              Mode: {selected.contentMode} · Format: {selected.videoFormat} · Niche:{" "}
-              {selected.niche}
+              Niche: {selected.niche}
             </p>
           )}
         </div>

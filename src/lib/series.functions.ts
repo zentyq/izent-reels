@@ -105,15 +105,15 @@ const createSeriesSchema = z.object({
   syncGoogleCalendar: z.boolean().default(true),
 });
 
-function clampPostsPerDay(n?: number | null): number {
-  return Math.max(1, Math.min(5, Math.round(n || 1)));
+function clampPostsPerDay(n?: number | null, max = 5): number {
+  return Math.max(1, Math.min(max, Math.round(n || 1)));
 }
 
 function clampIntervalHours(n?: number | null): number {
   return Math.max(1, Math.min(12, Math.round(n || 4)));
 }
 
-/** Next occurrence of HH:mm in Europe/London (stored as UTC Date). */
+/** Next occurrence of HH:mm in the series timezone (stored as UTC Date). */
 function nextPublishAt(
   publishTime: string,
   from = new Date(),
@@ -163,6 +163,36 @@ function parseScheduledAt(
   }
   return nextPublishAt(publishTime, new Date(), tz);
 }
+
+export const hasUserSeries = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const userId = await getUserId();
+    const [activeOrPaidCount, pending] = await Promise.all([
+      prisma.series.count({
+        where: { userId, status: { not: "pending_payment" } },
+      }),
+      prisma.series.findFirst({
+        where: { userId, status: "pending_payment" },
+        orderBy: { createdAt: "desc" },
+        select: { id: true },
+      }),
+    ]);
+    const total = await prisma.series.count({ where: { userId } });
+    return {
+      ok: true as const,
+      hasSeries: total > 0,
+      hasActiveSeries: activeOrPaidCount > 0,
+      pendingPaymentSeriesId: pending?.id || null,
+    };
+  } catch {
+    return {
+      ok: false as const,
+      hasSeries: false,
+      hasActiveSeries: false,
+      pendingPaymentSeriesId: null as string | null,
+    };
+  }
+});
 
 export const listSeries = createServerFn({ method: "GET" }).handler(async () => {
   try {
@@ -342,6 +372,15 @@ export const createSeries = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const userId = await getUserId();
+      const { readAppSettings } = await import("./admin.functions");
+      const appSettings = await readAppSettings();
+      if (appSettings.maintenanceMode) {
+        const { getUserAdminFields } = await import("./admin.functions");
+        const actor = await getUserAdminFields(userId);
+        if (actor.role !== "admin") {
+          return { ok: false as const, error: "The studio is under maintenance. Try again shortly." };
+        }
+      }
       const isProductMode =
         data.contentMode === "ugc" || data.contentMode === "commercial";
       const customVoiceUrl = data.customVoiceUrl?.trim() || null;
@@ -375,7 +414,7 @@ export const createSeries = createServerFn({ method: "POST" })
           : data.artStyle || "comic";
 
       const tz = resolveSeriesTimezone(data.timezone);
-      const postsPerDay = clampPostsPerDay(data.postsPerDay);
+      const postsPerDay = clampPostsPerDay(data.postsPerDay, appSettings.maxPostsPerDay);
       const postIntervalHours = clampIntervalHours(data.postIntervalHours);
       const firstAt = parseScheduledAt(data.scheduledPublishAt, data.publishTime, tz);
       const daySlots = slotsForDay(firstAt, postsPerDay, postIntervalHours);
@@ -458,43 +497,21 @@ export const createSeries = createServerFn({ method: "POST" })
           projectId,
           platforms: data.platforms,
           calendarEventId,
-          status: "active",
+          // Keep this series out of the worker until checkout is confirmed.
+          status: "pending_payment",
         },
       });
 
-      // Seed today's posts at interval slots (exactly postsPerDay — no second-day buffer)
-      const lockedScript = data.lockedScript?.trim() || null;
-      const lockedTitle = data.lockedTitle?.trim() || null;
-      let video = null as Awaited<ReturnType<typeof prisma.seriesVideo.create>> | null;
-      for (let i = 0; i < daySlots.length; i++) {
-        const scheduledAt = daySlots[i];
-        const created = await prisma.seriesVideo.create({
-          data: {
-            seriesId: series.id,
-            episodeNumber: i + 1,
-            status: "pending",
-            scheduledAt,
-            // Produce full video ASAP; publish waits for scheduledAt
-            generateAt: generateAtForSchedule(scheduledAt),
-            calendarEventId: i === 0 ? calendarEventId : null,
-            // First video inherits YouTube locked script when present
-            ...(i === 0 && lockedScript
-              ? {
-                  script: lockedScript,
-                  title: lockedTitle || null,
-                }
-              : {}),
-          },
-        });
-        if (i === 0) video = created;
-      }
+      // Do not create or generate any videos until subscription is confirmed.
+      // Clear any leftover draft videos if this series was recreated/retried.
+      await prisma.seriesVideo.deleteMany({
+        where: {
+          seriesId: series.id,
+          status: { in: ["pending", "failed"] },
+        },
+      });
 
-      // Kick auto generate/post in background — no manual "Generate" needed
-      void runSeriesQueuePass().catch((e) =>
-        console.warn("Auto queue after createSeries:", (e as Error).message),
-      );
-
-      return { ok: true as const, series, video, calendarLink };
+      return { ok: true as const, series, video: null, calendarLink };
     } catch (e) {
       return { ok: false as const, error: (e as Error).message };
     }
@@ -509,6 +526,12 @@ export const updateSeriesStatus = createServerFn({ method: "POST" })
         where: { id: data.seriesId, userId },
       });
       if (!existing) return { ok: false as const, error: "Series not found" };
+      if (existing.status === "pending_payment" && data.status === "active") {
+        return {
+          ok: false as const,
+          error: "Complete your subscription before starting this series.",
+        };
+      }
       const series = await prisma.series.update({
         where: { id: data.seriesId },
         data: { status: data.status },
@@ -518,6 +541,111 @@ export const updateSeriesStatus = createServerFn({ method: "POST" })
       return { ok: false as const, error: (e as Error).message };
     }
   });
+
+/** Mock checkout details for the subscription screen. Replace with a payment provider later. */
+export const getMockSubscription = createServerFn({ method: "GET" })
+  .inputValidator(z.object({ seriesId: z.string() }))
+  .handler(async ({ data }) => {
+    try {
+      const userId = await getUserId();
+      const series = await prisma.series.findFirst({
+        where: { id: data.seriesId, userId },
+        select: { id: true, name: true, niche: true, status: true },
+      });
+      if (!series) return { ok: false as const, error: "Series not found" };
+      if (series.status === "pending_payment") {
+        await prisma.seriesVideo.deleteMany({
+          where: {
+            seriesId: series.id,
+            status: { in: ["pending", "failed", "generating"] },
+          },
+        });
+      }
+      return { ok: true as const, series };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
+    }
+  });
+
+/**
+ * Temporary mock payment confirmation. A real provider must replace this with a
+ * signed webhook before production billing is enabled.
+ */
+export const confirmMockSubscription = createServerFn({ method: "POST" })
+  .inputValidator(
+    z.object({
+      seriesId: z.string(),
+      plan: z.enum(["hobby", "daily", "pro"]),
+      billing: z.enum(["monthly", "yearly"]),
+      additionalSeries: z.number().int().min(0).max(20).default(0),
+    }),
+  )
+  .handler(async ({ data }) => {
+    try {
+      const userId = await getUserId();
+      const existing = await prisma.series.findFirst({
+        where: { id: data.seriesId, userId },
+      });
+      if (!existing) return { ok: false as const, error: "Series not found" };
+
+      if (existing.status === "pending_payment") {
+        await prisma.series.update({
+          where: { id: existing.id },
+          data: { status: "active" },
+        });
+      }
+
+      // Create first video slots only after payment confirmation.
+      await seedInitialVideosForSeries(existing.id);
+
+      // Generate immediately after confirmation.
+      void runSeriesQueuePass().catch((e) =>
+        console.warn("Auto queue after mock checkout:", (e as Error).message),
+      );
+      return { ok: true as const };
+    } catch (e) {
+      return { ok: false as const, error: (e as Error).message };
+    }
+  });
+
+/** Create the first pending video(s) for a series after subscription. */
+async function seedInitialVideosForSeries(seriesId: string) {
+  const series = await prisma.series.findUnique({ where: { id: seriesId } });
+  if (!series || series.status !== "active") return [];
+
+  const existingCount = await prisma.seriesVideo.count({ where: { seriesId } });
+  if (existingCount > 0) return [];
+
+  const tz = resolveSeriesTimezone(series.timezone);
+  const postsPerDay = clampPostsPerDay(series.postsPerDay);
+  const postIntervalHours = clampIntervalHours(series.postIntervalHours);
+  const firstAt =
+    series.nextPublishAt || nextPublishAt(series.publishTime || "12:00", new Date(), tz);
+  const daySlots = slotsForDay(firstAt, postsPerDay, postIntervalHours);
+  const lockedScript = (series.lockedScript || "").trim() || null;
+
+  const created: Awaited<ReturnType<typeof prisma.seriesVideo.create>>[] = [];
+  for (let i = 0; i < daySlots.length; i++) {
+    const scheduledAt = daySlots[i];
+    const row = await prisma.seriesVideo.create({
+      data: {
+        seriesId: series.id,
+        episodeNumber: i + 1,
+        status: "pending",
+        scheduledAt,
+        generateAt: generateAtForSchedule(scheduledAt),
+        calendarEventId: i === 0 ? series.calendarEventId : null,
+        ...(i === 0 && lockedScript
+          ? {
+              script: lockedScript,
+            }
+          : {}),
+      },
+    });
+    created.push(row);
+  }
+  return created;
+}
 
 export const deleteSeries = createServerFn({ method: "POST" })
   .inputValidator(z.object({ seriesId: z.string() }))
@@ -545,6 +673,12 @@ export const generateSeriesVideoNow = createServerFn({ method: "POST" })
         include: { series: true },
       });
       if (!video) return { ok: false as const, error: "Video not found" };
+      if (video.series.status !== "active") {
+        return {
+          ok: false as const,
+          error: "Complete your subscription before generating videos.",
+        };
+      }
       if (video.status === "generating") {
         return { ok: false as const, error: "Generation already in progress" };
       }
@@ -834,6 +968,9 @@ async function runVideoGeneration(videoId: string) {
     include: { series: true },
   });
   if (!video) throw new Error("Video not found");
+  if (video.series.status !== "active") {
+    throw new Error("This series is waiting for subscription confirmation.");
+  }
 
   // Single attempt lock — never re-enter if already generating/ready/published
   if (video.status === "generating") {
@@ -1521,6 +1658,12 @@ export const generateNextEpisode = createServerFn({ method: "POST" })
         where: { id: data.seriesId, userId },
       });
       if (!series) return { ok: false as const, error: "Series not found" };
+      if (series.status !== "active") {
+        return {
+          ok: false as const,
+          error: "Complete your subscription before generating videos.",
+        };
+      }
 
       const video = await enqueueNextVideo(series.id);
       if (!video) return { ok: false as const, error: "Could not queue next story" };
@@ -1620,8 +1763,9 @@ export const updateSeriesSettings = createServerFn({ method: "POST" })
         where: { id: seriesId },
         data: {
           ...rest,
-          // Always keep UK time for posting schedules
-          timezone: SERIES_TIMEZONE,
+          timezone: resolveSeriesTimezone(
+            (rest as { timezone?: string | null }).timezone ?? existing.timezone,
+          ),
           projectId,
           ...(postsPerDay != null ? { postsPerDay: clampPostsPerDay(postsPerDay) } : {}),
           ...(postIntervalHours != null

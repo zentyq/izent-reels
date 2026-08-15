@@ -228,19 +228,10 @@ export const generateOAuthUrl = createServerFn({ method: "POST" })
     z.object({
       projectId: z.string().min(1),
       platform: z.enum([
+        "YOUTUBE",
         "FACEBOOK",
         "INSTAGRAM",
-        "X",
-        "LINKEDIN",
         "TIKTOK",
-        "YOUTUBE",
-        "THREADS",
-        "PINTEREST",
-        "BLUESKY",
-        "GOOGLE",
-        "REDDIT",
-        "SNAPCHAT",
-        "TELEGRAM",
       ]),
       redirectUrl: z.string().url(),
     })

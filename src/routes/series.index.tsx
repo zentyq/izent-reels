@@ -27,10 +27,10 @@ import {
 export const Route = createFileRoute("/series/")({
   head: () => ({
     meta: [
-      { title: "Series — IzentSocial" },
+      { title: "Series - Izent Reels" },
       {
         name: "description",
-        content: "Auto-generate faceless short videos and post them on a schedule.",
+        content: "Auto-generate short videos and post them on a schedule.",
       },
     ],
   }),
@@ -97,7 +97,7 @@ function SeriesListPage() {
     try {
       const res = await fnNext({ data: { seriesId: id, generateNow: true } });
       if (!res.ok) return toast.error(res.error || "Next story failed");
-      toast.success("Next story generated — complete standalone story");
+      toast.success("Next story generated - complete standalone story");
       load();
     } finally {
       setNextBusyId(null);
@@ -107,7 +107,7 @@ function SeriesListPage() {
   return (
     <SeriesShell
       title="Your series"
-      subtitle="Configure once — we generate, schedule, and post faceless reels automatically."
+      subtitle="Configure once - we generate, schedule, and post automatically."
     >
       <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div className="flex gap-2">
@@ -182,7 +182,7 @@ function SeriesListPage() {
               </div>
               {!(s.platforms || []).length && (
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  No social accounts for posting —{" "}
+                  No social accounts for posting.{" "}
                   <Link to="/series/settings" className="underline font-medium">
                     connect in Settings
                   </Link>

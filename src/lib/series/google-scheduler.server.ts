@@ -60,11 +60,11 @@ export async function syncGoogleCalendarEvent(input: {
       description: input.description || "",
       start: {
         dateTime: input.start.toISOString(),
-        timeZone: input.timezone || "Europe/London",
+        timeZone: input.timezone || "UTC",
       },
       end: {
         dateTime: (input.end || new Date(input.start.getTime() + 30 * 60_000)).toISOString(),
-        timeZone: input.timezone || "Europe/London",
+        timeZone: input.timezone || "UTC",
       },
     };
     const res = await fetch(

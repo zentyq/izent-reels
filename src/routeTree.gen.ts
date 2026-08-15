@@ -9,33 +9,51 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as HistoryRouteImport } from './routes/history'
+import { Route as TermsRouteImport } from './routes/terms'
+import { Route as SubscribeRouteImport } from './routes/subscribe'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as HowItWorksRouteImport } from './routes/how-it-works'
+import { Route as FaqRouteImport } from './routes/faq'
+import { Route as ContactRouteImport } from './routes/contact'
 import { Route as ConnectorsRouteImport } from './routes/connectors'
-import { Route as ComposerRouteImport } from './routes/composer'
+import { Route as BlogRouteImport } from './routes/blog'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AboutRouteImport } from './routes/about'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SeriesIndexRouteImport } from './routes/series.index'
 import { Route as SeriesVideosRouteImport } from './routes/series.videos'
 import { Route as SeriesSettingsRouteImport } from './routes/series.settings'
 import { Route as SeriesCreateRouteImport } from './routes/series.create'
-import { Route as StudioIndexRouteImport } from './routes/studio.index'
-import { Route as StudioGenerateRouteImport } from './routes/studio.generate'
-import { Route as StudioAssetsRouteImport } from './routes/studio.assets'
+import { Route as BlogSlugRouteImport } from './routes/blog.$slug'
 
-const SettingsRoute = SettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
+const SubscribeRoute = SubscribeRouteImport.update({
+  id: '/subscribe',
+  path: '/subscribe',
   getParentRoute: () => rootRouteImport,
 } as any)
-const HistoryRoute = HistoryRouteImport.update({
-  id: '/history',
-  path: '/history',
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HowItWorksRoute = HowItWorksRouteImport.update({
+  id: '/how-it-works',
+  path: '/how-it-works',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FaqRoute = FaqRouteImport.update({
+  id: '/faq',
+  path: '/faq',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactRoute = ContactRouteImport.update({
+  id: '/contact',
+  path: '/contact',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectorsRoute = ConnectorsRouteImport.update({
@@ -43,9 +61,19 @@ const ConnectorsRoute = ConnectorsRouteImport.update({
   path: '/connectors',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ComposerRoute = ComposerRouteImport.update({
-  id: '/composer',
-  path: '/composer',
+const BlogRoute = BlogRouteImport.update({
+  id: '/blog',
+  path: '/blog',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AboutRoute = AboutRouteImport.update({
+  id: '/about',
+  path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -73,153 +101,184 @@ const SeriesCreateRoute = SeriesCreateRouteImport.update({
   path: '/series/create',
   getParentRoute: () => rootRouteImport,
 } as any)
-const StudioIndexRoute = StudioIndexRouteImport.update({
-  id: '/studio/',
-  path: '/studio/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const StudioGenerateRoute = StudioGenerateRouteImport.update({
-  id: '/studio/generate',
-  path: '/studio/generate',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const StudioAssetsRoute = StudioAssetsRouteImport.update({
-  id: '/studio/assets',
-  path: '/studio/assets',
-  getParentRoute: () => rootRouteImport,
+const BlogSlugRoute = BlogSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => BlogRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/composer': typeof ComposerRoute
+  '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/blog': typeof BlogRouteWithChildren
   '/connectors': typeof ConnectorsRoute
-  '/history': typeof HistoryRoute
-  '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
+  '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
+  '/how-it-works': typeof HowItWorksRoute
+  '/privacy': typeof PrivacyRoute
+  '/subscribe': typeof SubscribeRoute
+  '/terms': typeof TermsRoute
+  '/blog/$slug': typeof BlogSlugRoute
   '/series/create': typeof SeriesCreateRoute
   '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series/': typeof SeriesIndexRoute
-  '/studio/generate': typeof StudioGenerateRoute
-  '/studio/assets': typeof StudioAssetsRoute
-  '/studio/': typeof StudioIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/composer': typeof ComposerRoute
+  '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/blog': typeof BlogRouteWithChildren
   '/connectors': typeof ConnectorsRoute
-  '/history': typeof HistoryRoute
-  '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
+  '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
+  '/how-it-works': typeof HowItWorksRoute
+  '/privacy': typeof PrivacyRoute
+  '/subscribe': typeof SubscribeRoute
+  '/terms': typeof TermsRoute
+  '/blog/$slug': typeof BlogSlugRoute
   '/series/create': typeof SeriesCreateRoute
   '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series': typeof SeriesIndexRoute
-  '/studio/generate': typeof StudioGenerateRoute
-  '/studio/assets': typeof StudioAssetsRoute
-  '/studio': typeof StudioIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/composer': typeof ComposerRoute
+  '/about': typeof AboutRoute
+  '/admin': typeof AdminRoute
+  '/blog': typeof BlogRouteWithChildren
   '/connectors': typeof ConnectorsRoute
-  '/history': typeof HistoryRoute
-  '/login': typeof LoginRoute
-  '/settings': typeof SettingsRoute
+  '/contact': typeof ContactRoute
+  '/faq': typeof FaqRoute
+  '/how-it-works': typeof HowItWorksRoute
+  '/privacy': typeof PrivacyRoute
+  '/subscribe': typeof SubscribeRoute
+  '/terms': typeof TermsRoute
+  '/blog/$slug': typeof BlogSlugRoute
   '/series/create': typeof SeriesCreateRoute
   '/series/settings': typeof SeriesSettingsRoute
   '/series/videos': typeof SeriesVideosRoute
   '/series/': typeof SeriesIndexRoute
-  '/studio/generate': typeof StudioGenerateRoute
-  '/studio/assets': typeof StudioAssetsRoute
-  '/studio/': typeof StudioIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/composer'
+    | '/about'
+    | '/admin'
+    | '/blog'
     | '/connectors'
-    | '/history'
-    | '/login'
-    | '/settings'
+    | '/contact'
+    | '/faq'
+    | '/how-it-works'
+    | '/privacy'
+    | '/subscribe'
+    | '/terms'
+    | '/blog/$slug'
     | '/series/create'
     | '/series/settings'
     | '/series/videos'
     | '/series/'
-    | '/studio/generate'
-    | '/studio/assets'
-    | '/studio/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/composer'
+    | '/about'
+    | '/admin'
+    | '/blog'
     | '/connectors'
-    | '/history'
-    | '/login'
-    | '/settings'
+    | '/contact'
+    | '/faq'
+    | '/how-it-works'
+    | '/privacy'
+    | '/subscribe'
+    | '/terms'
+    | '/blog/$slug'
     | '/series/create'
     | '/series/settings'
     | '/series/videos'
     | '/series'
-    | '/studio/generate'
-    | '/studio/assets'
-    | '/studio'
   id:
     | '__root__'
     | '/'
-    | '/composer'
+    | '/about'
+    | '/admin'
+    | '/blog'
     | '/connectors'
-    | '/history'
-    | '/login'
-    | '/settings'
+    | '/contact'
+    | '/faq'
+    | '/how-it-works'
+    | '/privacy'
+    | '/subscribe'
+    | '/terms'
+    | '/blog/$slug'
     | '/series/create'
     | '/series/settings'
     | '/series/videos'
     | '/series/'
-    | '/studio/generate'
-    | '/studio/assets'
-    | '/studio/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ComposerRoute: typeof ComposerRoute
+  AboutRoute: typeof AboutRoute
+  AdminRoute: typeof AdminRoute
+  BlogRoute: typeof BlogRouteWithChildren
   ConnectorsRoute: typeof ConnectorsRoute
-  HistoryRoute: typeof HistoryRoute
-  LoginRoute: typeof LoginRoute
-  SettingsRoute: typeof SettingsRoute
+  ContactRoute: typeof ContactRoute
+  FaqRoute: typeof FaqRoute
+  HowItWorksRoute: typeof HowItWorksRoute
+  PrivacyRoute: typeof PrivacyRoute
+  SubscribeRoute: typeof SubscribeRoute
+  TermsRoute: typeof TermsRoute
   SeriesCreateRoute: typeof SeriesCreateRoute
   SeriesSettingsRoute: typeof SeriesSettingsRoute
   SeriesVideosRoute: typeof SeriesVideosRoute
   SeriesIndexRoute: typeof SeriesIndexRoute
-  StudioGenerateRoute: typeof StudioGenerateRoute
-  StudioAssetsRoute: typeof StudioAssetsRoute
-  StudioIndexRoute: typeof StudioIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/settings': {
-      id: '/settings'
-      path: '/settings'
-      fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
+    '/subscribe': {
+      id: '/subscribe'
+      path: '/subscribe'
+      fullPath: '/subscribe'
+      preLoaderRoute: typeof SubscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/history': {
-      id: '/history'
-      path: '/history'
-      fullPath: '/history'
-      preLoaderRoute: typeof HistoryRouteImport
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/how-it-works': {
+      id: '/how-it-works'
+      path: '/how-it-works'
+      fullPath: '/how-it-works'
+      preLoaderRoute: typeof HowItWorksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/faq': {
+      id: '/faq'
+      path: '/faq'
+      fullPath: '/faq'
+      preLoaderRoute: typeof FaqRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact': {
+      id: '/contact'
+      path: '/contact'
+      fullPath: '/contact'
+      preLoaderRoute: typeof ContactRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connectors': {
@@ -229,11 +288,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ConnectorsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/composer': {
-      id: '/composer'
-      path: '/composer'
-      fullPath: '/composer'
-      preLoaderRoute: typeof ComposerRouteImport
+    '/blog': {
+      id: '/blog'
+      path: '/blog'
+      fullPath: '/blog'
+      preLoaderRoute: typeof BlogRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/about': {
+      id: '/about'
+      path: '/about'
+      fullPath: '/about'
+      preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -271,44 +344,42 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SeriesCreateRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/studio/': {
-      id: '/studio/'
-      path: '/studio'
-      fullPath: '/studio/'
-      preLoaderRoute: typeof StudioIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/studio/generate': {
-      id: '/studio/generate'
-      path: '/studio/generate'
-      fullPath: '/studio/generate'
-      preLoaderRoute: typeof StudioGenerateRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/studio/assets': {
-      id: '/studio/assets'
-      path: '/studio/assets'
-      fullPath: '/studio/assets'
-      preLoaderRoute: typeof StudioAssetsRouteImport
-      parentRoute: typeof rootRouteImport
+    '/blog/$slug': {
+      id: '/blog/$slug'
+      path: '/$slug'
+      fullPath: '/blog/$slug'
+      preLoaderRoute: typeof BlogSlugRouteImport
+      parentRoute: typeof BlogRoute
     }
   }
 }
 
+interface BlogRouteChildren {
+  BlogSlugRoute: typeof BlogSlugRoute
+}
+
+const BlogRouteChildren: BlogRouteChildren = {
+  BlogSlugRoute: BlogSlugRoute,
+}
+
+const BlogRouteWithChildren = BlogRoute._addFileChildren(BlogRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ComposerRoute: ComposerRoute,
+  AboutRoute: AboutRoute,
+  AdminRoute: AdminRoute,
+  BlogRoute: BlogRouteWithChildren,
   ConnectorsRoute: ConnectorsRoute,
-  HistoryRoute: HistoryRoute,
-  LoginRoute: LoginRoute,
-  SettingsRoute: SettingsRoute,
+  ContactRoute: ContactRoute,
+  FaqRoute: FaqRoute,
+  HowItWorksRoute: HowItWorksRoute,
+  PrivacyRoute: PrivacyRoute,
+  SubscribeRoute: SubscribeRoute,
+  TermsRoute: TermsRoute,
   SeriesCreateRoute: SeriesCreateRoute,
   SeriesSettingsRoute: SeriesSettingsRoute,
   SeriesVideosRoute: SeriesVideosRoute,
   SeriesIndexRoute: SeriesIndexRoute,
-  StudioGenerateRoute: StudioGenerateRoute,
-  StudioAssetsRoute: StudioAssetsRoute,
-  StudioIndexRoute: StudioIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

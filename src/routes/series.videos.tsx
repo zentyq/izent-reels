@@ -27,6 +27,7 @@ import {
 import { downloadMediaToDevice } from "@/lib/download-media";
 import {
   formatScheduleLabels,
+  localTimezone,
   londonDatetimeLocalToUtc,
   toLondonDatetimeLocalValue,
 } from "@/lib/series/timezone";
@@ -34,7 +35,7 @@ import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/series/videos")({
   head: () => ({
-    meta: [{ title: "Series Videos — IzentSocial" }],
+    meta: [{ title: "Series Videos - Izent Reels" }],
   }),
   component: SeriesVideosPage,
 });
@@ -100,7 +101,7 @@ function SeriesVideosPage() {
       if ((res as any).warning) {
         toast.warning(String((res as any).warning));
       } else if ((res as any).tiktokPending) {
-        toast.message("Posted — TikTok may take 1–2 minutes to appear");
+        toast.message("Posted - TikTok may take 1–2 minutes to appear");
       } else {
         toast.success("Posted to connected social accounts");
       }
@@ -114,21 +115,20 @@ function SeriesVideosPage() {
     if (!scheduleAt) return toast.error("Pick a date and time");
     let utc: Date;
     try {
-      // datetime-local is treated as UK wall time (not browser OS timezone)
-      utc = londonDatetimeLocalToUtc(scheduleAt);
+      // datetime-local is treated as the user's local timezone
+      utc = londonDatetimeLocalToUtc(scheduleAt, localTimezone());
     } catch {
       return toast.error("Invalid schedule date/time");
     }
     if (utc.getTime() <= Date.now() + 30_000) {
-      return toast.error("Pick a future UK time");
+      return toast.error("Pick a future time");
     }
-    const labels = formatScheduleLabels(utc);
+    const labels = formatScheduleLabels(utc, localTimezone());
     setPostBusyId(id);
     try {
       const res = await fnPublish({ data: { videoId: id, scheduleAt: utc.toISOString() } });
       if (!res.ok) return toast.error(res.error || "Schedule failed");
-      toast.success(`Scheduled for ${labels.uk}`);
-      toast.message(`UTC fire time: ${labels.utc}`);
+      toast.success(`Scheduled for ${labels.local}`);
       if ((res as any).calendarLink) {
         toast.message("Add to Google Calendar", {
           action: {
@@ -176,7 +176,7 @@ function SeriesVideosPage() {
   return (
     <SeriesShell
       title="Videos"
-      subtitle="Generate, review, post now, or schedule automatic posting. Thumbnails only for 16:9 long videos."
+      subtitle="Generate, review, post now, or schedule automatic posting."
     >
       {loading ? (
         <div className="flex justify-center py-20">
@@ -245,13 +245,16 @@ function SeriesVideosPage() {
                   <p className="text-xs text-muted-foreground">
                     {v.series?.name} ·{" "}
                     {v.status === "published" && v.publishedAt
-                      ? `posted ${formatScheduleLabels(new Date(v.publishedAt)).uk}`
+                      ? `posted ${formatScheduleLabels(new Date(v.publishedAt), localTimezone()).local}`
                       : v.scheduledAt
                         ? (() => {
-                            const { uk, utc } = formatScheduleLabels(new Date(v.scheduledAt));
-                            return `scheduled ${uk} · fires ${utc}`;
+                            const { local } = formatScheduleLabels(
+                              new Date(v.scheduledAt),
+                              localTimezone(),
+                            );
+                            return `scheduled ${local}`;
                           })()
-                        : "—"}
+                        : "-"}
                   </p>
                   {(v.description || v.caption) && (
                     <p className="text-sm text-muted-foreground line-clamp-2">
@@ -261,7 +264,7 @@ function SeriesVideosPage() {
                   {v.error && <p className="text-xs text-destructive">{v.error}</p>}
                   {scheduleFor === v.id && (
                     <div className="rounded-lg border border-border/50 p-3 space-y-2 max-w-sm">
-                      <Label className="text-xs">Schedule post (UK time)</Label>
+                      <Label className="text-xs">Schedule post (local time)</Label>
                       <Input
                         type="datetime-local"
                         value={scheduleAt}
@@ -270,14 +273,13 @@ function SeriesVideosPage() {
                       {scheduleAt &&
                         (() => {
                           try {
-                            const { uk, utc } = formatScheduleLabels(
-                              londonDatetimeLocalToUtc(scheduleAt),
+                            const { local } = formatScheduleLabels(
+                              londonDatetimeLocalToUtc(scheduleAt, localTimezone()),
+                              localTimezone(),
                             );
                             return (
                               <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                UK: {uk}
-                                <br />
-                                UTC fire time: {utc}
+                                Posts at: {local}
                               </p>
                             );
                           } catch {

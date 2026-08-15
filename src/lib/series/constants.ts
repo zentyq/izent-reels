@@ -1,10 +1,10 @@
 export const SERIES_STEPS = [
-  { id: 1, key: "niche", title: "Format, type & niche", optional: false },
+  { id: 1, key: "niche", title: "Niche", optional: false },
   { id: 2, key: "voice", title: "Voice", optional: true },
   { id: 3, key: "music", title: "Background Music", optional: true },
   { id: 4, key: "art", title: "Art Style", optional: true },
   { id: 5, key: "caption", title: "Caption Style", optional: true },
-  { id: 6, key: "effects", title: "Visual mode & effects", optional: true },
+  { id: 6, key: "effects", title: "Effects", optional: true },
   { id: 7, key: "social", title: "Connect Social Accounts", optional: true },
   { id: 8, key: "details", title: "Series Details", optional: false },
 ] as const;
@@ -480,13 +480,6 @@ export const ART_STYLES = [
     promptHint: "3D animated Pixar/Disney style, soft lighting, cinematic",
   },
   {
-    id: "photoreal",
-    label: "Photoreal",
-    image: "/series/art-styles/modern-cartoon.png",
-    promptHint:
-      "photorealistic cinematic still, natural lighting, authentic look, no illustration",
-  },
-  {
     id: "commercial-photo",
     label: "Commercial photo",
     image: "/series/art-styles/disney.png",
@@ -495,7 +488,7 @@ export const ART_STYLES = [
   },
 ] as const;
 
-/** Faceless keeps illustrated + photoreal styles; UGC/commercial use commercial look only (real video pipeline). */
+/** Faceless keeps illustrated styles; UGC/commercial use commercial look only (real video pipeline). */
 export function artStylesForContentMode(mode: string) {
   if (mode === "ugc" || mode === "commercial") {
     return ART_STYLES.filter((a) => a.id === "commercial-photo");
@@ -532,19 +525,10 @@ export const CAPTION_STYLES = [
   { id: "clarity", label: "Clarity", preview: "clarity" },
 ] as const;
 
-/** Target lengths for short vertical reels (10s → 5min) */
+/** Target lengths for short vertical reels */
 export const VIDEO_DURATIONS = [
-  { id: "10", label: "10 seconds", seconds: 10, monetizable: false },
-  { id: "15", label: "15 seconds", seconds: 15, monetizable: false },
-  { id: "20", label: "20 seconds", seconds: 20, monetizable: false },
-  { id: "30", label: "30 seconds", seconds: 30, monetizable: false },
-  { id: "45", label: "45 seconds", seconds: 45, monetizable: false },
-  { id: "60", label: "60 seconds", seconds: 60, monetizable: true },
-  { id: "90", label: "90 seconds", seconds: 90, monetizable: true },
-  { id: "120", label: "2 minutes", seconds: 120, monetizable: true },
-  { id: "180", label: "3 minutes", seconds: 180, monetizable: true },
-  { id: "240", label: "4 minutes", seconds: 240, monetizable: true },
-  { id: "300", label: "5 minutes", seconds: 300, monetizable: true },
+  { id: "30-40", label: "30-40 seconds", seconds: 35, monetizable: false },
+  { id: "60-70", label: "60-70 seconds", seconds: 65, monetizable: true },
 ] as const;
 
 /** Target lengths for long horizontal videos (5 → 30 min) */
@@ -564,15 +548,32 @@ export function durationSeconds(duration: string): number {
   if (short) return short.seconds;
   const long = LONG_VIDEO_DURATIONS.find((d) => d.id === duration);
   if (long) return long.seconds;
-  if (duration === "30-40") return 35;
-  if (duration === "60-70") return 65;
+  // Legacy short ids
+  if (duration === "10") return 10;
+  if (duration === "15") return 15;
+  if (duration === "20") return 20;
+  if (duration === "30") return 35;
+  if (duration === "45") return 45;
+  if (duration === "60") return 65;
+  if (duration === "90") return 90;
+  if (duration === "120") return 120;
+  if (duration === "180") return 180;
+  if (duration === "240") return 240;
+  if (duration === "300") return 300;
   const n = Number(duration);
   if (Number.isFinite(n) && n >= 10 && n <= 1800) return Math.round(n);
-  return 30;
+  return 35;
 }
 
 export function durationsForFormat(format: string) {
   return format === "long" ? LONG_VIDEO_DURATIONS : VIDEO_DURATIONS;
+}
+
+/** Map legacy duration ids onto the current short options. */
+export function normalizeShortDuration(duration: string): string {
+  if (VIDEO_DURATIONS.some((d) => d.id === duration)) return duration;
+  if (duration === "60" || duration === "60-70" || Number(duration) >= 60) return "60-70";
+  return "30-40";
 }
 
 /**
@@ -595,10 +596,10 @@ export function frameSizeForFormat(format: string): { width: number; height: num
 }
 
 export const SERIES_PLATFORMS = [
-  { id: "TIKTOK", label: "TikTok", formats: ["short"] as const },
-  { id: "INSTAGRAM", label: "Instagram", formats: ["short"] as const },
   { id: "YOUTUBE", label: "YouTube", formats: ["short", "long"] as const },
   { id: "FACEBOOK", label: "Facebook", formats: ["long", "short"] as const },
+  { id: "INSTAGRAM", label: "Instagram", formats: ["short"] as const },
+  { id: "TIKTOK", label: "TikTok", formats: ["short"] as const },
 ] as const;
 
 export function platformsForFormat(format: string) {
@@ -612,26 +613,31 @@ export const WAVESPEED_VIDEO_MODELS = [
     id: "kwaivgi/kling-v3.0-std/image-to-video",
     label: "Kling 3.0 Std",
     note: "Fast · great motion",
+    credits: 10,
   },
   {
     id: "kwaivgi/kling-v3.0-pro/image-to-video",
     label: "Kling 3.0 Pro",
     note: "Higher quality",
+    credits: 20,
   },
   {
     id: "bytedance/seedance-v1-pro-fast/image-to-video",
     label: "Seedance Pro Fast",
     note: "Cinematic · fast",
+    credits: 15,
   },
   {
     id: "google/veo3.1/image-to-video",
     label: "Google Veo 3.1",
     note: "Premium motion",
+    credits: 30,
   },
   {
     id: "google/veo3.1-fast/image-to-video",
     label: "Google Veo 3.1 Fast",
     note: "Veo · faster",
+    credits: 20,
   },
 ] as const;
 

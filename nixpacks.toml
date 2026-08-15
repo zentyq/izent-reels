@@ -1,4 +1,14 @@
+# Coolify / Nixpacks fallback when not using Dockerfile
 providers = ["node"]
 
 [phases.setup]
-nixPkgs = ["...", "ffmpeg", "python3"]
+nixPkgs = ["...", "ffmpeg", "python3", "curl"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm run start"

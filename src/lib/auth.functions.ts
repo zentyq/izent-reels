@@ -4,6 +4,7 @@ import { prisma } from "./db";
 import bcrypt from "bcryptjs";
 import { randomBytes } from "node:crypto";
 import { getCookie, setCookie, deleteCookie } from "@tanstack/react-start/server";
+import { getUserAdminFields, promoteAdminIfNeeded, readAppSettings } from "./admin.functions";
 
 const SESSION_COOKIE = "izent_session";
 const SESSION_MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
@@ -23,14 +24,23 @@ export const register = createServerFn({ method: "POST" })
       return { ok: false as const, error: "An account with this email already exists." };
     }
 
+    const [settings, userCount] = await Promise.all([
+      readAppSettings(),
+      prisma.user.count(),
+    ]);
+    if (!settings.registrationOpen && userCount > 0) {
+      return { ok: false as const, error: "Registration is closed right now." };
+    }
+
     const passwordHash = await bcrypt.hash(data.password, 12);
-    const user = await prisma.user.create({
+    const created = await prisma.user.create({
       data: {
         email: data.email,
         name: data.name,
         passwordHash,
       },
     });
+    const user = await promoteAdminIfNeeded(created);
 
     // Auto-login after register
     const token = randomBytes(32).toString("hex");
@@ -50,7 +60,10 @@ export const register = createServerFn({ method: "POST" })
       path: "/",
     });
 
-    return { ok: true as const, user: { id: user.id, email: user.email, name: user.name } };
+    return {
+      ok: true as const,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    };
   });
 
 // ─── Login ─────────────────────────────────────────────────
@@ -62,15 +75,20 @@ export const login = createServerFn({ method: "POST" })
     })
   )
   .handler(async ({ data }) => {
-    const user = await prisma.user.findUnique({ where: { email: data.email } });
-    if (!user) {
+    const found = await prisma.user.findUnique({ where: { email: data.email } });
+    if (!found) {
       return { ok: false as const, error: "Invalid email or password." };
     }
+    const adminFields = await getUserAdminFields(found.id);
+    if (adminFields.status === "suspended") {
+      return { ok: false as const, error: "This account has been suspended." };
+    }
 
-    const valid = await bcrypt.compare(data.password, user.passwordHash);
+    const valid = await bcrypt.compare(data.password, found.passwordHash);
     if (!valid) {
       return { ok: false as const, error: "Invalid email or password." };
     }
+    const user = await promoteAdminIfNeeded(found);
 
     const token = randomBytes(32).toString("hex");
     await prisma.session.create({
@@ -89,7 +107,10 @@ export const login = createServerFn({ method: "POST" })
       path: "/",
     });
 
-    return { ok: true as const, user: { id: user.id, email: user.email, name: user.name } };
+    return {
+      ok: true as const,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    };
   });
 
 // ─── Logout ────────────────────────────────────────────────
@@ -124,12 +145,22 @@ export const getMe = createServerFn({ method: "GET" })
       return { ok: false as const, user: null };
     }
 
+    const adminFields = await getUserAdminFields(session.user.id);
+    if (adminFields.status === "suspended") {
+      await prisma.session.delete({ where: { id: session.id } });
+      deleteCookie(SESSION_COOKIE, { path: "/" });
+      return { ok: false as const, user: null };
+    }
+
+    const user = await promoteAdminIfNeeded({ ...session.user, role: adminFields.role });
+
     return {
       ok: true as const,
       user: {
-        id: session.user.id,
-        email: session.user.email,
-        name: session.user.name,
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
         hasInstagramCookie: !!session.user.instagramCookie,
       },
     };
