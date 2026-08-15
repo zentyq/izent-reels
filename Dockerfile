@@ -21,8 +21,9 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY setup-ytdlp.js ./
 
-# Install deps (postinstall: prisma generate + yt-dlp). yt-dlp download is best-effort.
-RUN npm ci \
+# Coolify may inject NODE_ENV=production at build time, which would skip
+# vite/typescript (devDependencies). Always install them for the image build.
+RUN npm ci --include=dev \
  && if [ ! -x ./yt-dlp ]; then curl -fsSL -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp || true; fi \
  && if [ -f ./yt-dlp ]; then chmod +x yt-dlp; fi
 
