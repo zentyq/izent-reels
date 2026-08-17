@@ -84,6 +84,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Izent Reels" },
       { name: "description", content: "Izent Reels scripts, produces, and publishes shorts to your connected accounts." },
       { name: "author", content: "Izent Reels" },
+      { name: "theme-color", content: "#010E29" },
       { property: "og:title", content: "Izent Reels" },
       { property: "og:description", content: "Izent Reels scripts, produces, and publishes shorts to your connected accounts." },
       { property: "og:type", content: "website" },
@@ -91,13 +92,24 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:site", content: "@izentreels" },
       { name: "twitter:title", content: "Izent Reels" },
       { name: "twitter:description", content: "Izent Reels scripts, produces, and publishes shorts to your connected accounts." },
-      { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/67a3e59f-983a-4d39-ad5d-742111a74de0/id-preview-567a69e6--8309cb95-61ce-44f8-b881-c60e076ba2f5.lovable.app-1780559443363.png" },
-      { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/67a3e59f-983a-4d39-ad5d-742111a74de0/id-preview-567a69e6--8309cb95-61ce-44f8-b881-c60e076ba2f5.lovable.app-1780559443363.png" },
+      { property: "og:image", content: "/brand/izent-reels-logo.webp" },
+      { name: "twitter:image", content: "/brand/izent-reels-logo.webp" },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      {
+        rel: "icon",
+        type: "image/png",
+        sizes: "32x32",
+        href: "/brand/favicon-32x32.png",
+      },
+      {
+        rel: "apple-touch-icon",
+        sizes: "180x180",
+        href: "/brand/apple-touch-icon.png",
       },
       {
         rel: "stylesheet",

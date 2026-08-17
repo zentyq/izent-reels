@@ -2,17 +2,12 @@ import { useId } from "react";
 
 export function IzentLogo({ className = "h-8 w-8" }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 32 32" fill="none" aria-hidden>
-      <rect width="32" height="32" rx="8" fill="#C9A227" />
-      <circle cx="11.5" cy="13" r="2" fill="#111111" />
-      <circle cx="20.5" cy="13" r="2" fill="#111111" />
-      <path
-        d="M11 20c1.6 2.2 3.4 3.2 5 3.2S19.4 22.2 21 20"
-        stroke="#111111"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-    </svg>
+    <img
+      src="/brand/izent-reels-icon.png"
+      alt=""
+      aria-hidden="true"
+      className={`${className} rounded-[22%] object-cover shadow-sm`}
+    />
   );
 }
 
