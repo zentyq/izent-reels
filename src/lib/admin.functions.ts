@@ -530,6 +530,7 @@ export const getProviderHealth = createServerFn({ method: "GET" }).handler(async
         check("WaveSpeed", process.env.WAVESPEED_API_KEY, true),
         check("ElevenLabs", process.env.ELEVENLABS_API_KEY, true),
         check("Ayrshare", process.env.AYRSHARE_API_KEY, true),
+        check("Google OAuth", process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
         check("YouTube Data API", process.env.YOUTUBE_API_KEY),
         check("Gemini", process.env.GEMINI_API_KEY),
         check("OpenAI", process.env.OPENAI_API_KEY),

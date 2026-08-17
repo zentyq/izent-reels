@@ -12,6 +12,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { toast } from "sonner";
 import { getMe } from "@/lib/auth.functions";
 import { getPublicAppSettings } from "@/lib/admin.functions";
 import { hasUserSeries } from "@/lib/series.functions";
@@ -106,9 +107,11 @@ const TESTIMONIALS = [
 
 export function LandingPage({
   authMode,
+  authError,
   onAuthModeChange,
 }: {
   authMode: AuthMode | null;
+  authError?: string;
   onAuthModeChange: (mode: AuthMode | null) => void;
 }) {
   const fnGetMe = useServerFn(getMe);
@@ -122,6 +125,12 @@ export function LandingPage({
   const [tagline, setTagline] = useState(DEFAULT_APP_SETTINGS.tagline);
   const [registrationOpen, setRegistrationOpen] = useState(true);
   const channel = CHANNELS[channelIndex];
+
+  useEffect(() => {
+    if (!authError) return;
+    toast.error(authError);
+    navigate({ to: "/", search: { auth: "signin" }, replace: true });
+  }, [authError]);
 
   useEffect(() => {
     fnGetMe()
@@ -195,7 +204,9 @@ export function LandingPage({
           <>
             <button
               type="button"
-              onClick={openSignin}
+              onClick={() => {
+                window.location.href = "/auth/google";
+              }}
               className="hidden h-10 items-center gap-2 rounded-full border border-neutral-200 bg-white px-3.5 text-sm font-medium text-neutral-800 hover:bg-neutral-50 sm:inline-flex"
             >
               <GoogleMark className="h-4 w-4" />

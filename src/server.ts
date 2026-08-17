@@ -47,6 +47,16 @@ export default {
     try {
       const url = new URL(request.url);
 
+      // Google OAuth (sign-in / sign-up)
+      if (url.pathname === "/auth/google" && request.method === "GET") {
+        const { handleGoogleAuthStart } = await import("./lib/google-auth.server");
+        return handleGoogleAuthStart(request);
+      }
+      if (url.pathname === "/auth/google/callback" && request.method === "GET") {
+        const { handleGoogleAuthCallback } = await import("./lib/google-auth.server");
+        return handleGoogleAuthCallback(request);
+      }
+
       // Series auto-post cron (Google Cloud Scheduler / Railway cron)
       // Accept GET or POST so Railway cron HTTP checks work either way.
       if (

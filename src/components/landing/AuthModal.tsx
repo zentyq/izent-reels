@@ -61,7 +61,7 @@ export function AuthModal({
   }
 
   function handleGoogle() {
-    toast.message("Google sign-in isn’t connected yet. Use email and password.");
+    window.location.href = "/auth/google";
   }
 
   async function handleSubmit(e: React.FormEvent) {

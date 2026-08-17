@@ -5,6 +5,7 @@ import { LandingPage } from "@/components/landing/LandingPage";
 export const Route = createFileRoute("/")({
   validateSearch: z.object({
     auth: z.enum(["signin", "signup"]).optional(),
+    authError: z.string().optional(),
   }),
   head: () => ({
     meta: [
@@ -25,12 +26,13 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const { auth } = Route.useSearch();
+  const { auth, authError } = Route.useSearch();
   const navigate = useNavigate();
 
   return (
     <LandingPage
       authMode={auth ?? null}
+      authError={authError}
       onAuthModeChange={(mode) => {
         if (mode) navigate({ to: "/", search: { auth: mode } });
         else navigate({ to: "/", search: {} });

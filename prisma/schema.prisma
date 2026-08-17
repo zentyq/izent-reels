@@ -12,6 +12,8 @@ model User {
   email           String?  @unique
   name            String?
   passwordHash    String?
+  /// Google OAuth subject (`sub`) when signed in with Google
+  googleId        String?  @unique
   phone           String?  @unique
   instagramCookie String?
   /// user | admin

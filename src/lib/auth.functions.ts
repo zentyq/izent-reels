@@ -96,6 +96,13 @@ export const login = createServerFn({ method: "POST" })
       return { ok: false as const, error: "This account has been suspended." };
     }
 
+    if (!found.passwordHash) {
+      return {
+        ok: false as const,
+        error: "This account uses Google sign-in. Click Continue with Google.",
+      };
+    }
+
     const valid = await bcrypt.compare(data.password, found.passwordHash);
     if (!valid) {
       return { ok: false as const, error: "Invalid email or password." };
