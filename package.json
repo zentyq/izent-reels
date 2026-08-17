@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
-    "start": "prisma db push && node .output/server/index.mjs",
+    "start": "prisma db push --accept-data-loss && node .output/server/index.mjs",
     "postinstall": "prisma generate && node setup-ytdlp.js",
     "lint": "eslint .",
     "format": "prettier --write ."
