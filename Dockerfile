@@ -45,4 +45,5 @@ EXPOSE 8080
 RUN mkdir -p /app/uploads
 
 # prisma db push then Nitro node server
-CMD ["npm", "run", "start"]
+# Keep the container alive briefly on crash so Coolify logs remain readable.
+CMD ["sh", "-c", "npm run start || (echo START_FAILED; sleep 3600)"]
